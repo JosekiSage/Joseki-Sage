@@ -813,6 +813,7 @@ function App(){
   const[entries,setEntries]=useState([]);
   const[folders,setFolders]=useState([]);
   const[loaded,setLoaded]=useState(false);
+  const[fetching,setFetching]=useState(false);
   const[tab,setTab]=useState(TABS.library);
 
   useEffect(function(){
@@ -858,12 +859,14 @@ function App(){
       if(window.location.protocol==="file:"){
         var d=buildDemo(); setEntries(d.entries); setFolders(d.folders); setLoaded(true);
       } else {
+        setFetching(true);
         fetch(libUrl)
           .then(function(r){ return r.ok?r.json():Promise.reject(r.status); })
-          .then(function(data){ applyDefaultLib(data); })
+          .then(function(data){ applyDefaultLib(data); setFetching(false); })
           .catch(function(){
             // Library not found - start with empty library
             var d=buildDemo(); setEntries(d.entries); setFolders(d.folders); setLoaded(true);
+            setFetching(false);
           });
       }
     }
@@ -1966,7 +1969,18 @@ function App(){
         <div className="con">
           <p className="ptitle">Joseki Library</p>
           <p className="psub">Toggle On/Off to include in quiz pool.</p>
-          {importErr&&<p className="err" style={{marginBottom:"0.45rem"}}>{importErr}</p>}
+          {fetching&&(
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"2.5rem 1rem",gap:"1rem"}}>
+              <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+                <circle cx="18" cy="18" r="15" stroke="var(--color-border-secondary)" strokeWidth="3"/>
+                <path d="M18 3 a15 15 0 0 1 15 15" stroke="#4A8870" strokeWidth="3" strokeLinecap="round">
+                  <animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="0.9s" repeatCount="indefinite"/>
+                </path>
+              </svg>
+              <p style={{fontSize:"0.88rem",color:"var(--color-text-secondary)",fontStyle:"italic"}}>Loading default library...</p>
+            </div>
+          )}
+          {!fetching&&(<span>
           <div style={{display:"flex",gap:"0.35rem",marginBottom:"0.75rem",flexWrap:"wrap"}}>
             <input className="inp" style={{marginBottom:0,flex:1,minWidth:120}} placeholder="New folder name"
               value={newFolderName} onChange={function(e){ setNewFolderName(e.target.value); }}
@@ -1980,7 +1994,8 @@ function App(){
           </div>
           {folders.filter(function(f){ return !f.parentId; }).sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(folder){ return renderFolder(folder,0); })}
           {unfoldered.map(function(entry){ return renderEntry(entry); })}
-          {entries.length===0&&<div className="empty">No josekis yet. Tap "+ New".</div>}
+          {entries.length===0&&!fetching&&<div className="empty">No josekis yet. Tap "+ New".</div>}
+          </span>)}
         </div>
       )}
 
