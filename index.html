@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Joseki Sage</title>
+  <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAACvElEQVR42u1bIUgEQRSdE4Og6GHxMG0wGAwiYjKJwaBiMIhJxCQmgxiMBjGYxCRiEoNB0GAQk0lEDAoXDJv0LMeeKG7TNDA3zO7+v/Nn95b7v93tzP75b95//8/ebSn8rv8JQguCunBp5XI/6f06RJtbCcIA17uaJ1vangEMAAPAIhgvgroA+he7LR+Ut7gDFkMUAEEQpO8Pbg9xCj69YaH+ZTAA4BSwCR4bkE3w2LWyCEIG1Wo1Emddk2skYyjXDGZAGIZWC8LMz9JXp6sb21pWvkAMqFQqNEHdH5OMoVxzJ3bxq3vnTd9/iR7j+F7x3fT5ZHtJ2Ph6qPrGsRPDntmP1guQVAFo8KZr+lyor9eP36uHqi+6+wauTON0YLB+wI3Q1PgIKPAkNkCYoAYvhBA/jc85CcBP43Muap7KhrvHF9pGqK37AJvd1+ckUVRej8r5OFPnqGtOJYJjQ4OJeY0FQRfGpEBU6ifRX50rU0EF4entvZgpIIOGBO/sOCyRtGGAqTRCqJzGJAOkELIIUrXCVBZXCrF13DkA1D9EZGnkj8WhOWw7V29v0+Q/aR+glpA0IGA6QXk9DQjqnKiyxyKILYPSno83UYehuBOh75vLnOd5RjFMKoumE+Ho2gE9A3T6xqUDNnj9muorLh0ij8MuGIApVWfXN6RUXZ6daQrStAY1eCgDUvUB0lEUENTBy3uqINjsujUDkqxrcsWJYIX3p+CxThkQZZv7l0IIIY4cAZDb8wCsrc8v5Lr7LXEWoAThYGvBGQNK2D9JYbQgL4PmP3eCWACK+mcpZgCFBhRt96HPMVgDGAAGgDanipT/zAAGAAlAEdIAu0ZuhGzeGGmV5siGmawBnAIEL03llQoUoswM4NfmmAG0DHDBCJcNGDPANQPSsCHLlpsZkCUD4tiQ10ErNwC4FW4R+weHQldclfM6twAAAABJRU5ErkJggg=="/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
@@ -1128,6 +1129,13 @@ function App(){
     var r1=Math.min(size-1, bbox.maxR+PAD_LINES);
     var c0=Math.max(0, bbox.minC-PAD_LINES);
     var c1=Math.min(size-1, bbox.maxC+PAD_LINES);
+
+    // If more than half the board is needed in either dimension, show the full board
+    var rowsNeeded = r1 - r0 + 1;
+    var colsNeeded = c1 - c0 + 1;
+    if(rowsNeeded > size/2 || colsNeeded > size/2){
+      r0=0; r1=size-1; c0=0; c1=size-1;
+    }
 
     // Board is NEVER flipped in practice mode.
     // r=0 is always top (row 19), r=18 is always bottom (row 1).
