@@ -1024,13 +1024,25 @@ function App(){
       );
     }
 
-    // half: all columns, half the rows (rectangular 19x10 strip)
-    // quarter: half columns, half rows (square 10x10 corner)
+    // half: all rows, half the cols (left/right strip) OR all cols, half the rows (top/bottom strip)
+    // quarter: half cols, half rows (corner)
     var halfLines=Math.ceil(size/2);
-    var rowLines=halfLines;  // always show half the rows
-    var colLines=(viewMode==="quarter")?halfLines:size; // quarter=half cols, half=all cols
+
+    // For half view, rotation 0/2 = top/bottom (all cols, half rows)
+    //                rotation 1/3 = left/right (half cols, all rows)
+    var rowLines, colLines;
+    if(viewMode==="quarter"){
+      rowLines=halfLines; colLines=halfLines;
+    } else if(viewRot===1||viewRot===3){
+      // Left/right half: full rows, half cols
+      rowLines=size; colLines=halfLines;
+    } else {
+      // Top/bottom half: half rows, full cols
+      rowLines=halfLines; colLines=size;
+    }
 
     // rot 0=BR, 1=BL, 2=TL, 3=TR
+    // colStart: for right-side rotations (0,2 quarter; 3 half-right), start from right half
     var colStart=(viewRot===0||viewRot===3)?(size-colLines):0;
     var rowStart=(viewRot===0||viewRot===1)?(size-rowLines):0;
     var offX=colStart*CELL;
@@ -1043,32 +1055,49 @@ function App(){
     // Scale to fill available width; same scale applied to height
     var s=maxW/visW;
 
-    // Overlay coordinate labels for the visible grid lines.
-    // We render them in a separate SVG sized to the clip window,
-    // positioned over the board so they're always visible.
+    // gx/gy: exact pixel position of board grid line c or r in overlay space
+    // offX = colStart*CELL (no PAD offset since visW already includes PAD on both sides)
+    // SVG pixel of col c in GoBoard: PAD + c*CELL
+    // After translate(-offX): PAD + (c - colStart)*CELL
+    // After scale(s): (PAD + (c-colStart)*CELL) * s
+    function gxS(c){ return (PAD + (c-colStart)*CELL)*s; }
+    function gyS(r){ return (PAD + (r-rowStart)*CELL)*s; }
+
+    // Board-anchored labels: A=col0 always left, 19=row0 always top
     var showCoordsOverlay=rest.showCoords;
     var overlayLabels=[];
     if(showCoordsOverlay){
       var flipped=rest.flipped||false;
-      // Column labels along the top edge
-      for(var ci2=0;ci2<colLines;ci2++){
-        var gridCol=colStart+ci2; // actual grid column index
-        var xPos=PAD+ci2*CELL;   // x position within the clip window
-        var colLabel=flipped?COLS[size-1-gridCol]:COLS[gridCol];
-        overlayLabels.push(
-          <text key={"oc"+ci2} x={xPos*s} y={(PAD-10)*s} textAnchor="middle"
-            fontSize={8.5*s} fill="#5a3e1b" fontFamily="monospace">{colLabel}</text>
-        );
+      var cellPx=CELL*s;
+      var halfPad=cellPx*0.5;
+      var fsS=Math.max(9,Math.min(13,Math.round(halfPad*0.7)));
+
+      // Column labels: on bottom edge if bottom (row 18) is visible, else top (row 0)
+      var colEdgeRow=(rowStart+rowLines-1===size-1)?(size-1):(rowStart===0?0:-1);
+      if(colEdgeRow>=0){
+        var colAtBottom=(colEdgeRow===size-1);
+        var colY=colAtBottom ? gyS(colEdgeRow)+halfPad*0.55 : gyS(colEdgeRow)-halfPad*0.35;
+        for(var ci2=colStart;ci2<colStart+colLines;ci2++){
+          var colLabel=flipped?COLS[size-1-ci2]:COLS[ci2];
+          overlayLabels.push(
+            <text key={"oc"+ci2} x={gxS(ci2)} y={colY}
+              textAnchor="middle" fontSize={fsS} fill="#5a3e1b" fontFamily="monospace">{colLabel}</text>
+          );
+        }
       }
-      // Row labels along the left edge
-      for(var ri2=0;ri2<rowLines;ri2++){
-        var gridRow=rowStart+ri2;
-        var yPos=PAD+ri2*CELL;
-        var rowLabel=flipped?(gridRow+1):(size-gridRow);
-        overlayLabels.push(
-          <text key={"or"+ri2} x={(PAD-12)*s} y={yPos*s+3.5*s} textAnchor="end"
-            fontSize={8.5*s} fill="#5a3e1b" fontFamily="monospace">{rowLabel}</text>
-        );
+
+      // Row labels: on left edge if col 0 is visible, else right (col 18)
+      var rowEdgeCol=(colStart===0)?0:(colStart+colLines-1===size-1?(size-1):-1);
+      if(rowEdgeCol>=0){
+        var rowAtLeft=(rowEdgeCol===0);
+        var rowX=rowAtLeft ? gxS(rowEdgeCol)-halfPad*0.5 : gxS(rowEdgeCol)+halfPad*0.5;
+        for(var ri2=rowStart;ri2<rowStart+rowLines;ri2++){
+          var rowLabel=flipped?(ri2+1):(size-ri2);
+          overlayLabels.push(
+            <text key={"or"+ri2} x={rowX} y={gyS(ri2)+fsS*0.38}
+              textAnchor="middle" fontSize={fsS} fill="#5a3e1b" fontFamily="monospace">{rowLabel}</text>
+          );
+        }
       }
     }
 
@@ -1130,10 +1159,10 @@ function App(){
     var c0=Math.max(0, bbox.minC-PAD_LINES);
     var c1=Math.min(size-1, bbox.maxC+PAD_LINES);
 
-    // If more than half the board is needed in either dimension, show the full board
+    // If more than two-thirds of the board is needed in BOTH dimensions, show the full board
     var rowsNeeded = r1 - r0 + 1;
     var colsNeeded = c1 - c0 + 1;
-    if(rowsNeeded > size/2 || colsNeeded > size/2){
+    if(rowsNeeded > size*2/3 && colsNeeded > size*2/3){
       r0=0; r1=size-1; c0=0; c1=size-1;
     }
 
