@@ -1506,7 +1506,7 @@ function App(){
   const[qSettings,setQSettings]=useState({
     mirrorRandom:false,
     invertRandom:false, showContinuations:true, showMarkers:true, showComments:true,
-    showScoring:true
+    showScoring:true, playerRole:"random"
   });
   function setSetting(k,v){ setQSettings(function(s){ return {...s,[k]:v}; }); }
 
@@ -1541,12 +1541,15 @@ function App(){
       root=invertTree(root);
       inverted=true;
     }
-    // Randomly assign player to first or second move (50/50).
-    // Player color is derived from the joseki's actual move colors.
+    // Assign player color based on playerRole setting.
+    // Player 1 = whoever makes the first move in the sequence.
+    // Player 2 = whoever makes the second move.
     var firstMoveColor=(root.children&&root.children[0]&&root.children[0].move)
       ? root.children[0].move.color : "B";
-    var playerGoesFirst=Math.random()<0.5;
-    var effectivePc=playerGoesFirst?firstMoveColor:(firstMoveColor==="B"?"W":"B");
+    var secondMoveColor=firstMoveColor==="B"?"W":"B";
+    var role=qSettings.playerRole||"random";
+    var playerGoesFirst=role==="player1"?true:role==="player2"?false:Math.random()<0.5;
+    var effectivePc=playerGoesFirst?firstMoveColor:secondMoveColor;
     var initStones={};
     var setup=root.setupStones||{};
     Object.keys(setup).forEach(function(k){ initStones[k]={color:setup[k],moveNum:null}; });
@@ -2124,8 +2127,20 @@ function App(){
 
               <div className="card">
                 <p className="sect">Transformations</p>
-<div className="trow"><span className="tlbl">Random mirror each quiz</span><Toggle checked={qSettings.mirrorRandom} onChange={function(v){ setSetting("mirrorRandom",v); }}/></div>
+<div className="trow"><span className="tlbl">Randomly mirror each quiz</span><Toggle checked={qSettings.mirrorRandom} onChange={function(v){ setSetting("mirrorRandom",v); }}/></div>
                 <div className="trow"><span className="tlbl">Randomly invert colors</span><Toggle checked={qSettings.invertRandom} onChange={function(v){ setSetting("invertRandom",v); }}/></div>
+                <div className="trow">
+                  <span className="tlbl">Play as</span>
+                  <div style={{display:"flex",gap:"0.3rem"}}>
+                    {[["random","Random"],["player1","Player 1"],["player2","Player 2"]].map(function(opt){
+                      return <button key={opt[0]}
+                        className={"btn btnxs"+(qSettings.playerRole===opt[0]?" btnp":"")}
+                        onClick={function(){ setSetting("playerRole",opt[0]); }}>
+                        {opt[1]}
+                      </button>;
+                    })}
+                  </div>
+                </div>
                 <p className="sect">Display</p>
                 <div className="trow"><span className="tlbl">Show scoring</span><Toggle checked={qSettings.showScoring} onChange={function(v){ setSetting("showScoring",v); }}/></div>
                 <div className="trow"><span className="tlbl">Show letter continuations</span><Toggle checked={qSettings.showContinuations} onChange={function(v){ setSetting("showContinuations",v); }}/></div>
@@ -2212,8 +2227,9 @@ function App(){
                       Object.keys(qStones).forEach(function(k){
                         var p=k.split(","); addPt(Number(p[0]),Number(p[1]));
                       });
-                      // Immediate children of current node (next possible moves)
-                      if(qNode&&qNode.children){
+                      // Immediate children: only include in bbox when
+                      // showContinuations is on - hidden moves shouldn't expand the view
+                      if(qNode&&qNode.children&&qSettings.showContinuations){
                         qNode.children.forEach(function(ch){
                           if(ch.move&&!ch.move.pass) addPt(ch.move.r,ch.move.c);
                         });
@@ -2237,7 +2253,8 @@ function App(){
                 </div>
               </div>
               <p style={{fontSize:"0.71rem",color:"var(--color-text-tertiary)",marginBottom:"0.55rem"}}>
-                Playing as {qPlayerColor==="B"?"Black":"White"} (randomly assigned)
+                Playing as {qPlayerColor==="B"?"Black":"White"}
+                {qSettings.playerRole==="random"?" (randomly assigned)":qSettings.playerRole==="player1"?" (Player 1)":" (Player 2)"}
                 {qStatus==="done"?" -- tap board to replay":""}
               </p>
 
