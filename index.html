@@ -1348,6 +1348,9 @@ function App(){
   const[treeModalOpen,setTreeModalOpen]=useState(false);
   const[treeModalZoom,setTreeModalZoom]=useState(1);
   const treeModalNavRef=useRef(null);
+  const[qTreeModalOpen,setQTreeModalOpen]=useState(false);
+  const[qTreeModalZoom,setQTreeModalZoom]=useState(1);
+  const[qTreeModalPath,setQTreeModalPath]=useState([]);
   const treeNavRef=useRef(null);
   const treeZoomRef=useRef(1);
   useEffect(function(){ treeZoomRef.current=treeZoom; },[treeZoom]);
@@ -1528,10 +1531,11 @@ function App(){
 
   // Quiz
   const[qSettings,setQSettings]=useState({
-    mirrorRandom:false,
-    invertRandom:false, showContinuations:true, showMarkers:true, showComments:true,
+    mirrorRandom:false, randomNode:false,
+    invertRandom:false, showAnnotations:true,
     showScoring:true, playerRole:"random"
   });
+  const[qStartPath,setQStartPath]=useState([]);
   function setSetting(k,v){ setQSettings(function(s){ return {...s,[k]:v}; }); }
 
   const[qEntry,setQEntry]=useState(null);
@@ -1541,6 +1545,10 @@ function App(){
   const qPathRef=useRef([]);
   const[qStones,setQStones]=useState({});
   const[qStatus,setQStatus]=useState("waiting");
+  const[qWrongIsTenuki,setQWrongIsTenuki]=useState(false);
+  const[qWrongWasTenuki,setQWrongWasTenuki]=useState(false);
+  const[qOppTenuki,setQOppTenuki]=useState(false);
+  const[qCorrectTenuki,setQCorrectTenuki]=useState(false);
   const[qWrong,setQWrong]=useState(null);
   const[qWrongContinuations,setQWrongContinuations]=useState([]); // [{stones, entry, label}]
   const[qHint,setQHint]=useState(false);
@@ -1565,24 +1573,83 @@ function App(){
       root=invertTree(root);
       inverted=true;
     }
-    // Assign player color based on playerRole setting.
-    // Player 1 = whoever makes the first move in the sequence.
-    // Player 2 = whoever makes the second move.
+    // Assign player color.
+    // When randomNode is on: derive from the first child's move color at the start node
+    // (whoever moves next from that position is the player).
+    // Otherwise: use playerRole setting relative to the full sequence.
     var firstMoveColor=(root.children&&root.children[0]&&root.children[0].move)
       ? root.children[0].move.color : "B";
     var secondMoveColor=firstMoveColor==="B"?"W":"B";
-    var role=qSettings.playerRole||"random";
-    var playerGoesFirst=role==="player1"?true:role==="player2"?false:Math.random()<0.5;
-    var effectivePc=playerGoesFirst?firstMoveColor:secondMoveColor;
+    var effectivePc;
+    if(s.randomNode){
+      // Will be overridden below after startPath is chosen; set a default for now
+      effectivePc=firstMoveColor;
+    } else {
+      var role=qSettings.playerRole||"random";
+      var playerGoesFirst=role==="player1"?true:role==="player2"?false:Math.random()<0.5;
+      effectivePc=playerGoesFirst?firstMoveColor:secondMoveColor;
+    }
     var initStones={};
     var setup=root.setupStones||{};
     Object.keys(setup).forEach(function(k){ initStones[k]={color:setup[k],moveNum:null}; });
-    qPathRef.current=[];
-    setQEntry(entry); setQRoot(root); setQPath([]); setQStones(initStones);
-    setQStatus("waiting"); setQWrong(null); setQHint(false); setQTenuki(false); setQWrongContinuations([]); setQPendingOpp(null); setQScore({c:0,w:0});
+    // Pick a random start node if randomNode is enabled
+    var startPath=[];
+    if(s.randomNode){
+      // Collect all non-leaf paths (nodes with children) so practice is meaningful
+      var candidates=[];
+      function collectPaths(node,path){
+        if(node.children&&node.children.length>0){
+          if(path.length>0) candidates.push(path); // exclude root
+          node.children.forEach(function(ch,i){ collectPaths(ch,path.concat(i)); });
+        }
+      }
+      collectPaths(root,[]);
+      if(candidates.length>0){
+        startPath=candidates[Math.floor(Math.random()*candidates.length)];
+        // Recompute initStones from stateAlongPath at startPath
+        var rootForState={...root,_boardSize:entry.boardSize};
+        var startState=stateAlongPath(rootForState,startPath);
+        initStones=startState.stones;
+        // Derive player color from whoever moves next at this node
+        var startNode=nodeAtPath(root,startPath);
+        if(startNode&&startNode.children&&startNode.children[0]&&startNode.children[0].move){
+          effectivePc=startNode.children[0].move.color;
+        }
+      }
+    }
+    qPathRef.current=startPath;
+    setQStartPath(startPath);
+    setQEntry(entry); setQRoot(root); setQPath(startPath); setQStones(initStones);
+    setQStatus("waiting"); setQWrong(null); setQHint(false); setQTenuki(false); setQWrongContinuations([]); setQPendingOpp(null); setQScore({c:0,w:0}); setQWrongIsTenuki(false); setQWrongWasTenuki(false); setQOppTenuki(false); setQCorrectTenuki(false);
     setQPlayerColor(effectivePc);
     setQTransform({mH:mH,mV:mV,inverted:inverted});
     setTab(TABS.quiz);
+  }
+  function restartQuiz(){
+    if(!qEntry||!qRoot) return;
+    // Reset to the same start path chosen at quiz start (preserves random node choice)
+    var rootForState={...qRoot,_boardSize:qEntry.boardSize};
+    var initStones={};
+    var setup=qRoot.setupStones||{};
+    Object.keys(setup).forEach(function(k){ initStones[k]={color:setup[k],moveNum:null}; });
+    if(qStartPath.length>0){
+      var startState=stateAlongPath(rootForState,qStartPath);
+      initStones=startState.stones;
+    }
+    // Re-randomise player color if role is random and this is a normal root-start session
+    // (not a random-node start or tree-navigator-selected node)
+    var newPlayerColor=qPlayerColor;
+    if(qSettings.playerRole==="random"&&qStartPath.length===0){
+      var firstMoveColor=(qRoot.children&&qRoot.children[0]&&qRoot.children[0].move)
+        ? qRoot.children[0].move.color : "B";
+      var secondMoveColor=firstMoveColor==="B"?"W":"B";
+      newPlayerColor=Math.random()<0.5?firstMoveColor:secondMoveColor;
+    }
+    qPathRef.current=qStartPath;
+    setQPlayerColor(newPlayerColor);
+    setQPath(qStartPath); setQStones(initStones);
+    setQStatus("waiting"); setQWrong(null); setQHint(false); setQTenuki(false);
+    setQWrongContinuations([]); setQPendingOpp(null); setQScore({c:0,w:0}); setQWrongIsTenuki(false); setQWrongWasTenuki(false); setQOppTenuki(false); setQCorrectTenuki(false);
   }
   function startRandom(){
     if(!enabledEntries.length) return;
@@ -1619,16 +1686,14 @@ function App(){
     return text;
   })();
   var qAnnotations=useMemo(function(){
-    if(!qNode) return [];
-    var a=qNode.annotations||[], out=[];
-    if(qSettings.showContinuations) out=out.concat(a.filter(function(x){ return x.type==="letter"; }));
-    if(qSettings.showMarkers) out=out.concat(a.filter(function(x){ return x.type==="triangle"; }));
-    return out;
-  },[qNode,qSettings.showContinuations,qSettings.showMarkers]);
+    if(!qNode||!qSettings.showAnnotations) return [];
+    var a=qNode.annotations||[];
+    return a.filter(function(x){ return x.type==="letter"||x.type==="triangle"; });
+  },[qNode,qSettings.showAnnotations]);
 
-  // Use a ref for showComments so the effect doesn't re-run on toggle (prevents crash)
-  var showCommentsRef=useRef(qSettings.showComments);
-  useEffect(function(){ showCommentsRef.current=qSettings.showComments; },[qSettings.showComments]);
+  // Use a ref for showAnnotations so the effect doesn't re-run on toggle (prevents crash)
+  var showAnnotationsRef=useRef(qSettings.showAnnotations);
+  useEffect(function(){ showAnnotationsRef.current=qSettings.showAnnotations; },[qSettings.showAnnotations]);
 
   useEffect(function(){
     if(tab!==TABS.quiz||!qNode||qStatus!=="waiting") return;
@@ -1637,7 +1702,7 @@ function App(){
     var idx=Math.floor(Math.random()*qNode.children.length);
     var child=qNode.children[idx];
     if(!child.move){ setQStatus("done"); return; }
-    if(!showCommentsRef.current){
+    if(!showAnnotationsRef.current){
       // Auto-play opponent after a short pause so player's stone sound registers first
       var oppMove=child.move;
       var oppIdx=idx;
@@ -1646,6 +1711,8 @@ function App(){
           var oppResult=applyMove(qStones,oppMove.r,oppMove.c,oppMove.color,qEntry.boardSize);
           if(oppResult.captured>0) playCapture(oppResult.captured); else playTok();
           setQStones(oppResult.stones);
+        } else {
+          setQOppTenuki(true); setQCorrectTenuki(false);
         }
         setQPendingOpp(null);
         setQPath(function(p){ return p.concat(oppIdx); });
@@ -1686,6 +1753,8 @@ function App(){
   function handleQuizBoardClick(r,c){
     // Always read the current path from the ref -- never from stale qPath closure
     var activePath=qPathRef.current.slice();
+    // Clear correct-tenuki message on any board interaction
+    if(qCorrectTenuki) setQCorrectTenuki(false);
 
     // In wrong/review mode: if tap is on a valid continuation, place it immediately.
     // If tap is elsewhere, enter review mode (continuations stay, buttons appear).
@@ -1739,12 +1808,18 @@ function App(){
           return;
         }
       }
-      // Tap not on a continuation: if still "wrong", move to review mode
-      if(qStatus==="wrong"){ setQWrong(null); setQStatus("review"); }
+      // Tap not on a continuation: if still "wrong", dismiss marker
+      // For tenuki wrong moves, go back to "waiting" directly (no continuations to review)
+      // For normal wrong moves, go to "review" so player can explore continuations
+      if(qStatus==="wrong"){
+        setQWrong(null);
+        if(qWrongIsTenuki){ setQWrongIsTenuki(false); setQStatus("waiting"); }
+        else { setQStatus("review"); }
+      }
       return;
     }
 
-    if(qStatus==="done"){ startQuiz(qEntry); return; }
+    if(qStatus==="done"){ restartQuiz(); return; }
     if(!qRoot||qStatus!=="waiting") return;
 
     // If opponent move is pending, advance it on any tap
@@ -1774,27 +1849,27 @@ function App(){
 
     // Handle tenuki sentinel (r=-1,c=-1)
     if(r<0||c<0){
-      if(qTenuki){
-        setQTenuki(false);
-        var pi=kids.findIndex(function(ch){ return ch.move&&ch.move.pass&&ch.move.color===qPlayerColor; });
-        if(pi!==-1){
-          var tenukiPath=activePath.concat(pi);
-          qPathRef.current=tenukiPath;
-          setQScore(function(s){ return {c:s.c+1,w:s.w}; });
-      setQSession(function(ss){
-        var newStreak=ss.streak+1;
-        var mult=Math.min(1+newStreak*0.5,3);
-        var pts=Math.round(10*mult);
-        return {points:ss.points+pts, streak:newStreak, totalC:ss.totalC+1, totalW:ss.totalW};
-      });
-      setQHint(false); setQWrongContinuations([]); setQStatus("correct");
-          setTimeout(function(){ setQPath(tenukiPath); setQStatus("waiting"); },850);
-        } else {
-          setQScore(function(s){ return {c:s.c,w:s.w+1}; });
+      // r<0,c<0 is the tenuki signal - handle directly without qTenuki state
+      var pi=kids.findIndex(function(ch){ return ch.move&&ch.move.pass&&ch.move.color===qPlayerColor; });
+      if(pi!==-1){
+        var tenukiPath=activePath.concat(pi);
+        qPathRef.current=tenukiPath;
+        setQCorrectTenuki(true);
+        setQScore(function(s){ return {c:s.c+1,w:s.w}; });
+        setQSession(function(ss){
+          var newStreak=ss.streak+1;
+          var mult=Math.min(1+newStreak*0.5,3);
+          var pts=Math.round(10*mult);
+          return {points:ss.points+pts, streak:newStreak, totalC:ss.totalC+1, totalW:ss.totalW};
+        });
+        setQHint(false); setQWrongContinuations([]);
+        setQPath(tenukiPath); setQStatus("waiting");
+      } else {
+        setQScore(function(s){ return {c:s.c,w:s.w+1}; });
         setQSession(function(ss){ return {points:ss.points, streak:0, totalC:ss.totalC, totalW:ss.totalW+1}; });
         setQStatus("wrong");
-          setQWrongContinuations(buildWrongContinuations(kids));
-        }
+        setQWrongContinuations(buildWrongContinuations(kids));
+        setQWrongWasTenuki(true);
       }
       return;
     }
@@ -1817,6 +1892,7 @@ function App(){
         var pts=Math.round(10*mult);
         return {points:ss.points+pts, streak:newStreak, totalC:ss.totalC+1, totalW:ss.totalW};
       });
+      setQOppTenuki(false);
       setQHint(false); setQWrongContinuations([]); setQStatus("correct");
       setTimeout(function(){ setQPath(newActivePath); setQStatus("waiting"); },850);
     } else {
@@ -1854,13 +1930,17 @@ function App(){
         }
       }
       if(!switched){
-        // Wrong move -- show ghost continuations, wait for tap to dismiss
+        // Wrong move
         setQWrong({r:r,c:c});
         setQScore(function(s){ return {c:s.c,w:s.w+1}; });
         setQSession(function(ss){ return {points:ss.points, streak:0, totalC:ss.totalC, totalW:ss.totalW+1}; });
         setQStatus("wrong");
         setQWrongContinuations(buildWrongContinuations(kids));
-        // No setTimeout -- player taps board to dismiss
+        // If all correct continuations are pass moves, flag it so the UI
+        // can show a message directing the player to use the Tenuki button
+        var allPass=kids.length>0&&kids.every(function(ch){ return !ch.move||ch.move.pass; });
+        setQWrongIsTenuki(allPass);
+        // Player taps board anywhere to dismiss wrong marker and try again
       }
     }
   }
@@ -2211,8 +2291,14 @@ function App(){
 <div className="trow"><span className="tlbl">Randomly mirror each quiz</span><Toggle checked={qSettings.mirrorRandom} onChange={function(v){ setSetting("mirrorRandom",v); }}/></div>
                 <div className="trow"><span className="tlbl">Randomly invert colors</span><Toggle checked={qSettings.invertRandom} onChange={function(v){ setSetting("invertRandom",v); }}/></div>
                 <div className="trow">
-                  <span className="tlbl">Play as</span>
-                  <div style={{display:"flex",gap:"0.3rem"}}>
+                  <span className="tlbl">Start from random node<span style={{fontSize:"0.65rem",color:"var(--color-text-tertiary)",fontStyle:"italic",display:"block"}}>Begins the selected joseki from a random position within its tree</span></span>
+                  <Toggle checked={qSettings.randomNode} onChange={function(v){
+                    setSetting("randomNode",v);
+                  }}/>
+                </div>
+                <div className="trow">
+                  <span className="tlbl" style={{opacity:qSettings.randomNode?0.4:1}}>Play as</span>
+                  <div style={{display:"flex",gap:"0.3rem",opacity:qSettings.randomNode?0.4:1,pointerEvents:qSettings.randomNode?"none":"auto"}}>
                     {[["random","Random"],["player1","Player 1"],["player2","Player 2"]].map(function(opt){
                       return <button key={opt[0]}
                         className={"btn btnxs"+(qSettings.playerRole===opt[0]?" btnp":"")}
@@ -2224,9 +2310,7 @@ function App(){
                 </div>
                 <p className="sect">Display</p>
                 <div className="trow"><span className="tlbl">Show scoring</span><Toggle checked={qSettings.showScoring} onChange={function(v){ setSetting("showScoring",v); }}/></div>
-                <div className="trow"><span className="tlbl">Show letter continuations</span><Toggle checked={qSettings.showContinuations} onChange={function(v){ setSetting("showContinuations",v); }}/></div>
-                <div className="trow"><span className="tlbl">Show marked stones</span><Toggle checked={qSettings.showMarkers} onChange={function(v){ setSetting("showMarkers",v); }}/></div>
-                <div className="trow"><span className="tlbl">Show position comment<span style={{fontSize:"0.65rem",color:"var(--color-text-tertiary)",fontStyle:"italic",display:"block"}}>Disabling leads to faster play</span></span><Toggle checked={qSettings.showComments} onChange={function(v){ setSetting("showComments",v); }}/></div>
+                <div className="trow"><span className="tlbl">Show position annotations<span style={{fontSize:"0.65rem",color:"var(--color-text-tertiary)",fontStyle:"italic",display:"block"}}>Disabling leads to faster play</span></span><Toggle checked={qSettings.showAnnotations} onChange={function(v){ setSetting("showAnnotations",v); }}/></div>
               </div>
               {singlePracticeEntry&&(
                 <div style={{fontSize:"0.78rem",color:"var(--color-text-secondary)",marginBottom:"0.5rem",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
@@ -2277,7 +2361,7 @@ function App(){
                       </span>
                     </div>
                   )}
-                  <button className="btn btnxs" onClick={function(){ startQuiz(qEntry); }}>Retry</button>
+                  <button className="btn btnxs" onClick={function(){ restartQuiz(); }}>Retry</button>
                   <button className="btn btnxs" onClick={function(){
                     var next=enabledEntries[Math.floor(Math.random()*enabledEntries.length)];
                     setQSession(function(ss){ return ss; });
@@ -2309,8 +2393,8 @@ function App(){
                         var p=k.split(","); addPt(Number(p[0]),Number(p[1]));
                       });
                       // Immediate children: only include in bbox when
-                      // showContinuations is on - hidden moves shouldn't expand the view
-                      if(qNode&&qNode.children&&qSettings.showContinuations){
+                      // showAnnotations is on - hidden moves shouldn't expand the view
+                      if(qNode&&qNode.children&&qSettings.showAnnotations){
                         qNode.children.forEach(function(ch){
                           if(ch.move&&!ch.move.pass) addPt(ch.move.r,ch.move.c);
                         });
@@ -2341,9 +2425,14 @@ function App(){
                 Playing as {qPlayerColor==="B"?"Black":"White"}
                 {qSettings.playerRole==="random"?" (randomly assigned)":qSettings.playerRole==="player1"?" (Player 1)":" (Player 2)"}
                 {qStatus==="done"?" -- tap board to replay":""}
+                
               </p>
 
               <div style={{display:"flex",gap:"0.3rem",flexWrap:"wrap",marginBottom:"0.65rem"}}>
+                <button className="btn btnsm"
+                  onClick={function(){ setQTreeModalPath(qPath); setQTreeModalOpen(true); setQTreeModalZoom(1); }}>
+                  Open Joseki Tree
+                </button>
                 {(qStatus==="waiting"&&qIsPlayer&&qNode&&qNode.children.length>0)&&(
                   <button className="btn btnsm" onClick={function(){
                     if(qHint){ setQHint(false); setQWrongContinuations([]); }
@@ -2354,11 +2443,12 @@ function App(){
                     }
                   }}>{qHint?"Hide hint":"Hint"}</button>
                 )}
-              {(qStatus==="waiting"&&qIsPlayer&&qNode&&(qNode.children||[]).some(function(ch){ return ch.move&&ch.move.pass&&ch.move.color===qPlayerColor; }))&&(
-                  <button className="btn btnsm" onClick={function(){
-                    setQTenuki(true);
-                    handleQuizBoardClick(-1,-1);
-                  }}>Tenuki</button>
+              {(qStatus==="waiting"&&qIsPlayer)&&(
+                  <button className="btn btnsm"
+                    disabled={!(qNode&&(qNode.children||[]).some(function(ch){ return ch.move&&ch.move.pass&&ch.move.color===qPlayerColor; }))}
+                    onClick={function(){
+                      handleQuizBoardClick(-1,-1);
+                    }}>Tenuki</button>
                 )}
                 {qStatus==="review"&&(
                   <span style={{display:"flex",gap:"0.28rem",flexWrap:"wrap"}}>
@@ -2377,7 +2467,42 @@ function App(){
                   </span>
                 )}
               </div>
-              {(qSettings.showComments&&qCurComment)&&(
+              {(qStatus==="wrong"&&qWrongIsTenuki)&&(
+                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
+                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
+                  color:"#7A5A10",lineHeight:1.5}}>
+                  Tenuki - the correct move is to play elsewhere. Tap the board to dismiss, then press <strong>Tenuki</strong> to continue.
+                </div>
+              )}
+              {qCorrectTenuki&&(
+                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
+                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
+                  color:"#7A5A10",lineHeight:1.5,fontWeight:600}}>
+                  Tenuki
+                </div>
+              )}
+              {(qStatus==="wrong"&&qWrongWasTenuki)&&(
+                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
+                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
+                  color:"#7A5A10",lineHeight:1.5}}>
+                  Tenuki is not the right move here - a local response is needed. Tap the board to see the correct continuation.
+                </div>
+              )}
+              {(qOppTenuki&&qStatus==="waiting")&&(
+                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
+                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
+                  color:"#7A5A10",lineHeight:1.5}}>
+                  Opponent tenuki.
+                </div>
+              )}
+              {(qPendingOpp&&qPendingOpp.move&&qPendingOpp.move.pass)&&(
+                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
+                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
+                  color:"#7A5A10",lineHeight:1.5}}>
+                  Opponent tenuki - tap the board to confirm.
+                </div>
+              )}
+              {(qSettings.showAnnotations&&qCurComment)&&(
                 <div className="card" style={{borderColor:"#b5a060",marginBottom:"0.55rem"}}>
                   <span className="lbl" style={{marginBottom:"0.22rem"}}>Position note</span>
                   <p style={{fontSize:"0.79rem",fontStyle:"italic",color:"var(--color-text-secondary)",lineHeight:1.55}}>
@@ -2621,6 +2746,152 @@ function App(){
           </div>
         </div>
       )}
+
+      {qTreeModalOpen&&qRoot&&qEntry&&(function(){
+        // Practice tree modal: separate browse path from live qPath
+        // Browsing does NOT change the practice board state
+        var pSize=qEntry.boardSize;
+        var pNode=nodeAtPath(qRoot,qTreeModalPath);
+        var pRootForState={...qRoot,_boardSize:pSize};
+        var pState=stateAlongPath(pRootForState,qTreeModalPath);
+        var pStones=pState.stones;
+        var pMove=pNode?pNode.move:null;
+        var pComment=pNode?pNode.comment:"";
+        var pLabel=pMove?(pMove.pass?(pMove.color+" pass"):coord(pMove.r,pMove.c,pSize)):"Start";
+        return (
+          <div style={{position:"fixed",inset:0,zIndex:250,display:"flex",alignItems:"stretch"}}
+            onKeyDown={function(e){ if(e.key==="Escape") setQTreeModalOpen(false); }}
+            tabIndex={-1}>
+            <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.75)"}}
+              onClick={function(){ setQTreeModalOpen(false); }}/>
+            <div style={{position:"relative",margin:"auto",width:"min(96vw,1100px)",height:"min(92vh,800px)",
+              background:"var(--color-background-primary)",borderRadius:12,
+              border:"0.5px solid var(--color-border-secondary)",
+              display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              {/* Header */}
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",
+                borderBottom:"0.5px solid var(--color-border-secondary)",flexShrink:0}}>
+                <span style={{fontWeight:600,fontSize:"0.9rem",color:"var(--color-text-primary)"}}>Tree Navigator</span>
+                <span style={{fontSize:"0.78rem",color:"var(--color-text-tertiary)",flex:1}}>{qEntry.name}</span>
+                <button onClick={function(){ setQTreeModalZoom(function(z){ return Math.max(0.3,+(z-0.15).toFixed(2)); }); }}
+                  style={{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",
+                    borderRadius:4,padding:"2px 7px",fontSize:"0.78rem",cursor:"pointer",color:"var(--color-text-secondary)"}}>-</button>
+                <span style={{fontSize:"0.68rem",color:"var(--color-text-tertiary)",minWidth:32,textAlign:"center"}}>
+                  {Math.round(qTreeModalZoom*100)+"%"}</span>
+                <button onClick={function(){ setQTreeModalZoom(function(z){ return Math.min(3,+(z+0.15).toFixed(2)); }); }}
+                  style={{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",
+                    borderRadius:4,padding:"2px 7px",fontSize:"0.78rem",cursor:"pointer",color:"var(--color-text-secondary)"}}>+</button>
+                <button onClick={function(){ setQTreeModalZoom(1); }}
+                  style={{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",
+                    borderRadius:4,padding:"2px 6px",fontSize:"0.68rem",cursor:"pointer",color:"var(--color-text-secondary)"}}>Reset</button>
+                <button onClick={function(){
+                  var el=document.getElementById("qtree-modal-scroll");
+                  var node=document.getElementById("tree-active-node");
+                  if(!el||!node) return;
+                  var er=el.getBoundingClientRect(), nr=node.getBoundingClientRect();
+                  el.scrollLeft += (nr.left+nr.width/2)-(er.left+er.width/2);
+                  el.scrollTop  += (nr.top+nr.height/2)-(er.top+er.height/2);
+                }} style={{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",
+                  borderRadius:4,padding:"2px 8px",fontSize:"0.68rem",cursor:"pointer",color:"var(--color-text-secondary)"}}>Center</button>
+                <button onClick={function(){ setQTreeModalOpen(false); }}
+                  style={{background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",
+                    borderRadius:4,padding:"2px 10px",fontSize:"0.78rem",cursor:"pointer",
+                    color:"var(--color-text-secondary)",marginLeft:4}}>Close</button>
+              </div>
+              {/* Body: tree + preview panel */}
+              <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+                {/* Tree */}
+                <div id="qtree-modal-scroll" style={{flex:"0 0 75%",overflow:"auto",cursor:"grab",
+                  userSelect:"none",borderRight:"0.5px solid var(--color-border-secondary)"}}
+                  onMouseDown={function(e){
+                    if(e.button!==0) return;
+                    var el=e.currentTarget; el.style.cursor="grabbing";
+                    var sx=e.clientX,sy=e.clientY,sl=el.scrollLeft,st=el.scrollTop;
+                    function onMove(me){ el.scrollLeft=sl-(me.clientX-sx); el.scrollTop=st-(me.clientY-sy); }
+                    function onUp(){ el.style.cursor="grab";
+                      window.removeEventListener("mousemove",onMove);
+                      window.removeEventListener("mouseup",onUp); }
+                    window.addEventListener("mousemove",onMove);
+                    window.addEventListener("mouseup",onUp);
+                  }}>
+                  <div style={{display:"inline-block",padding:"12px"}}>
+                    <TreeDiagram root={qRoot} currentPath={qTreeModalPath} boardSize={pSize}
+                      zoom={qTreeModalZoom}
+                      onNavigate={function(path){ setQTreeModalPath(path); }}/>
+                  </div>
+                </div>
+                {/* Preview panel */}
+                <div style={{flex:"0 0 25%",display:"flex",flexDirection:"column",
+                  padding:"14px",gap:"0.65rem",overflow:"auto"}}>
+                  <div style={{fontWeight:600,fontSize:"0.82rem",color:"var(--color-text-primary)"}}>
+                    {pLabel}
+                  </div>
+                  {/* Mini board */}
+                  {(function(){
+                    var raw=PAD*2+CELL*(pSize-1); var s=200/raw;
+                    return (
+                      <div style={{width:200,height:200,flexShrink:0,overflow:"hidden",alignSelf:"center"}}>
+                        <div style={{transform:"scale("+s+")",transformOrigin:"top left",width:raw,height:raw}}>
+                          <GoBoard size={pSize} stones={pStones}
+                            lastMove={pMove} readOnly={true}
+                            annotations={pNode?pNode.annotations:[]}
+                            showCoords={true}/>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {/* Comment */}
+                  {pComment&&(
+                    <div style={{fontSize:"0.79rem",fontStyle:"italic",
+                      color:"var(--color-text-secondary)",lineHeight:1.55}}>
+                      {(function(){
+                        var raw=pComment.replace(/See\s*\.\s*/g,"").trim();
+                        var parts=[]; var linkRe=/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+                        var last=0,m;
+                        while((m=linkRe.exec(raw))!==null){
+                          if(m.index>last) parts.push(raw.slice(last,m.index));
+                          parts.push(<a key={m.index} href={m[2]} target="_blank" rel="noopener noreferrer"
+                            style={{color:"#4A8870"}}>{m[1]}</a>);
+                          last=m.index+m[0].length;
+                        }
+                        if(last<raw.length) parts.push(raw.slice(last));
+                        return parts;
+                      })()}
+                    </div>
+                  )}
+                  {/* Start practice from selected node button */}
+                  <div style={{marginTop:"auto",display:"flex",flexDirection:"column",gap:"0.4rem"}}>
+                    <button className="btn btnp btnsm" onClick={function(){
+                      // Derive player color from first child's move at selected node
+                      var selNode=nodeAtPath(qRoot,qTreeModalPath);
+                      var firstChild=selNode&&selNode.children&&selNode.children[0];
+                      var firstChildColor=firstChild&&firstChild.move&&!firstChild.move.pass
+                        ? firstChild.move.color : "B";
+                      // Compute stones at selected path
+                      var rootForState={...qRoot,_boardSize:pSize};
+                      var selState=stateAlongPath(rootForState,qTreeModalPath);
+                      var selStones=selState.stones;
+                      // Set start path and reset quiz state to selected node
+                      qPathRef.current=qTreeModalPath;
+                      setQStartPath(qTreeModalPath);
+                      setQPath(qTreeModalPath);
+                      setQStones(selStones);
+                      setQPlayerColor(firstChildColor);
+                      setQStatus("waiting");
+                      setQWrong(null); setQHint(false); setQTenuki(false);
+                      setQWrongContinuations([]); setQPendingOpp(null); setQScore({c:0,w:0});
+                      setQTreeModalOpen(false);
+                    }}>Start practice from here</button>
+                    <div style={{fontSize:"0.7rem",color:"var(--color-text-tertiary)",textAlign:"center"}}>
+                      Retry returns to this node. Random starts a new session.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {treeModalOpen&&(function(){
         // Compute board preview for current node
