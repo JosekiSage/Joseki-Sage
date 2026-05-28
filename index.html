@@ -2660,19 +2660,6 @@ function App(){
           <div style={{display:"flex",gap:"0.22rem",flexWrap:"wrap",marginBottom:"0.45rem"}}>
             <button className="btn btnsm" onClick={handleBack} disabled={!editPath.length}>Back</button>
             <button className="btn btnsm" onClick={handleUndoLeaf} disabled={!editPath.length||!editNode||editNode.children.length>0}>Undo</button>
-            {(function(){
-              var curNode=editPath.length>0?nodeAtPath(editRoot,editPath):null;
-              var isFlagged=curNode&&curNode.flagged;
-              return (
-                <button onClick={handleFlagNode} disabled={!editPath.length}
-                  style={isFlagged?{background:"#3A1212",border:"1px solid #8B2020",color:"#F4AEAE",
-                    borderRadius:4,padding:"2px 8px",fontSize:"0.78rem",cursor:"pointer"}:
-                    {background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",
-                    borderRadius:4,padding:"2px 8px",fontSize:"0.78rem",cursor:"pointer",color:"var(--color-text-secondary)"}}>
-                  {isFlagged?"Unflag node":"Flag node"}
-                </button>
-              );
-            })()}
             {deleteSubtreeConfirm?(
               <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",
                 background:"#FDF3F2",border:"1px solid #E8A09A",borderRadius:6,
@@ -2769,6 +2756,18 @@ function App(){
                     border:"0.5px solid var(--color-border-secondary)",
                     borderRadius:4,padding:"2px 8px",fontSize:"0.68rem",cursor:"pointer",
                     color:"var(--color-text-secondary)"}}>Center</button>
+                  {(function(){
+                    var fn=editPath.length>0?nodeAtPath(editRoot,editPath):null;
+                    var ff=fn&&fn.flagged;
+                    return <button title={ff?"Unflag this node":"Flag this node"}
+                      onClick={handleFlagNode} disabled={!editPath.length}
+                      style={ff?{background:"#3A1212",border:"1px solid #8B2020",color:"#F4AEAE",
+                        borderRadius:4,padding:"2px 8px",fontSize:"0.68rem",cursor:"pointer"}:
+                        {background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-secondary)",
+                        borderRadius:4,padding:"2px 8px",fontSize:"0.68rem",cursor:"pointer",color:"var(--color-text-secondary)"}}>
+                      {ff?"Unflag":"Flag"}
+                    </button>;
+                  })()}
                   <button title="Expand tree navigator" onClick={function(){ setTreeModalOpen(true); setTreeModalZoom(treeZoom); }}
                     style={{background:"var(--color-background-secondary)",
                       border:"0.5px solid var(--color-border-secondary)",
