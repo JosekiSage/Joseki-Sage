@@ -16,9 +16,9 @@
     },
     {
       "src": "icon-splash.png",
-      "sizes": "512x512",
+      "sizes": "800x800",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }
