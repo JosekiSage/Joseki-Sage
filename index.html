@@ -124,16 +124,21 @@ function downloadBlob(text, filename, mime){
 // Node structure
 let _nid=1;
 function makeNode(move){
-  return{id:_nid++, move:move||null, comment:"", children:[], setupStones:{}, annotations:[], colorOffset:0};
+  return{id:_nid++, type:move?"move":"root", move:move||null, comment:"", children:[], setupStones:{}, setupAdded:[], setupRemoved:[], annotations:[], colorOffset:0};
 }
 function rootNode(){ return makeNode(null); }
+function makeSetupNode(added,removed){
+  return{id:_nid++, type:"setup", move:null, comment:"", children:[], setupStones:{}, setupAdded:added||[], setupRemoved:removed||[], annotations:[], colorOffset:0};
+}
 function deepClone(n){
   if(!n) return null;
   return{
-    id:n.id, move:n.move?{...n.move}:null,
+    id:n.id, type:n.type||"move", move:n.move?{...n.move}:null,
     comment:n.comment, colorOffset:n.colorOffset||0,
     flagged:n.flagged||false,
     setupStones:{...n.setupStones},
+    setupAdded:(n.setupAdded||[]).map(function(s){ return{...s}; }),
+    setupRemoved:(n.setupRemoved||[]).map(function(s){ return{...s}; }),
     annotations:n.annotations.map(function(a){ return{...a}; }),
     children:n.children.map(deepClone)
   };
@@ -205,6 +210,75 @@ function nodeAtPath(root,path){
   return n;
 }
 
+function applySetupDelta(stones,node){
+  // Apply setupAdded and setupRemoved deltas from a setup node
+  (node.setupRemoved||[]).forEach(function(s){ delete stones[sk(s.r,s.c)]; });
+  (node.setupAdded||[]).forEach(function(s){ stones[sk(s.r,s.c)]={color:s.color,moveNum:null}; });
+}
+// --- Practice mode helpers ---
+
+// Return the color of the next move reachable from this node,
+// scanning through setup node children to find the first move.
+function nextMoveColor(node){
+  if(!node||!node.children||!node.children.length) return null;
+  for(var i=0;i<node.children.length;i++){
+    var ch=node.children[i];
+    if(ch.type==="setup"){
+      var c=nextMoveColor(ch);
+      if(c) return c;
+    } else if(ch.move){
+      return ch.move.color;
+    }
+  }
+  return null;
+}
+
+// Pre-step: resolve setup nodes before a turn begins (Option A).
+// Picks randomly from all children. If a setup child is picked,
+// applies its delta, advances path, and recurses. Stops when a
+// move child is picked OR no children remain.
+// Returns {node, path, stones} at the resolved position.
+function resolveSetupPreStep(node, path, stones){
+  if(!node||!node.children||!node.children.length) return {node:node,path:path,stones:stones};
+  // Check if there are any setup children
+  var hasSetup=node.children.some(function(ch){ return ch.type==="setup"; });
+  if(!hasSetup) return {node:node,path:path,stones:stones};
+  // Pick randomly from all children
+  var idx=Math.floor(Math.random()*node.children.length);
+  var pick=node.children[idx];
+  if(pick.type!=="setup"){
+    // Picked a move child -- stop, return current position
+    return {node:node,path:path,stones:stones};
+  }
+  // Picked a setup child -- apply delta, advance, recurse
+  var newStones=Object.assign({},stones);
+  (pick.setupRemoved||[]).forEach(function(s){ delete newStones[sk(s.r,s.c)]; });
+  (pick.setupAdded||[]).forEach(function(s){ newStones[sk(s.r,s.c)]={color:s.color,moveNum:null}; });
+  var newPath=path.concat(idx);
+  return resolveSetupPreStep(pick, newPath, newStones);
+}
+
+// Collect all player-reachable moves from a node, including through setup branches.
+// Used by hint mode and buildWrongContinuations.
+function collectReachableMoves(node, playerColor, stones, seen){
+  seen=seen||{};
+  var moves=[];
+  if(!node||!node.children) return moves;
+  node.children.forEach(function(ch){
+    if(ch.type==="setup"){
+      // Recurse into setup branch with delta applied
+      var newStones=Object.assign({},stones);
+      (ch.setupRemoved||[]).forEach(function(s){ delete newStones[sk(s.r,s.c)]; });
+      (ch.setupAdded||[]).forEach(function(s){ newStones[sk(s.r,s.c)]={color:s.color,moveNum:null}; });
+      var sub=collectReachableMoves(ch,playerColor,newStones,seen);
+      sub.forEach(function(m){ moves.push(m); });
+    } else if(ch.move&&ch.move.color===playerColor&&!ch.move.pass){
+      var k=sk(ch.move.r,ch.move.c);
+      if(!seen[k]){ seen[k]=true; moves.push({r:ch.move.r,c:ch.move.c,color:ch.move.color}); }
+    }
+  });
+  return moves;
+}
 function stateAlongPath(root,path){
   // Derive board size from root (default 19)
   var size=root._boardSize||19;
@@ -215,13 +289,14 @@ function stateAlongPath(root,path){
   if(n.move && !n.move.pass){
     moveNum++;
     var r1=applyMove(stones,n.move.r,n.move.c,n.move.color,size);
-    // Preserve moveNum for the placed stone
     stones=r1.stones; stones[sk(n.move.r,n.move.c)].moveNum=moveNum;
   } else if(n.move && n.move.pass){ moveNum++; }
   for(var i=0;i<path.length;i++){
     n=n.children[path[i]];
     if(!n) break;
-    if(n.move && !n.move.pass){
+    if(n.type==="setup"){
+      applySetupDelta(stones,n);
+    } else if(n.move && !n.move.pass){
       moveNum++;
       var r2=applyMove(stones,n.move.r,n.move.c,n.move.color,size);
       stones=r2.stones; stones[sk(n.move.r,n.move.c)].moveNum=moveNum;
@@ -268,13 +343,21 @@ function parseSgfC(s,size){
   return {r:r,c:c};
 }
 function nodeToSgf(node,size){
-  // Emit a single node's properties (no parens, no semicolon)
+  // Emit SGF properties for a single node
   var s="";
-  if(node.move){
-    var cl=node.move.color;
-    s+=cl+(node.move.pass?"[]":"["+sgfC(node.move.r,node.move.c)+"]");
+  if(node.type==="setup"){
+    // Emit AB/AW/AE for setup deltas
+    var ab=(node.setupAdded||[]).filter(function(s){ return s.color==="B"; });
+    var aw=(node.setupAdded||[]).filter(function(s){ return s.color==="W"; });
+    var ae=node.setupRemoved||[];
+    if(ab.length) s+="AB"+ab.map(function(s){ return "["+sgfC(s.r,s.c)+"]"; }).join("");
+    if(aw.length) s+="AW"+aw.map(function(s){ return "["+sgfC(s.r,s.c)+"]"; }).join("");
+    if(ae.length) s+="AE"+ae.map(function(s){ return "["+sgfC(s.r,s.c)+"]"; }).join("");
+  } else if(node.move){
+    if(node.move.pass) s+=node.move.color+"[]";
+    else s+=node.move.color+"["+sgfC(node.move.r,node.move.c)+"]";
   }
-  if(node.comment) s+="C["+node.comment.replace(/\]/g,"\\]")+"]";
+  if(node.comment) s+="C["+node.comment.replace(/\]/g,"\]")+"]";
   return s;
 }
 function seqToSgf(node,size){
@@ -347,18 +430,39 @@ function parseSgf(txt){
     }
     if(!nodes.length) return null;
     nodes[0].forEach(function(pv){ if(pv.p==="SZ") boardSize=parseInt(pv.vs[0])||19; });
-    function pn(ps){
-      var n=makeNode(null);
+    function pn(ps,isRoot){
+      // Check if this node has setup properties (AB/AW/AE) but no move
+      var hasMove=ps.some(function(pv){ return pv.p==="B"||pv.p==="W"; });
+      var hasSetup=ps.some(function(pv){ return pv.p==="AB"||pv.p==="AW"||pv.p==="AE"; });
+      var n;
+      if(!isRoot&&!hasMove&&hasSetup){
+        n=makeSetupNode([],[]);
+      } else {
+        n=makeNode(null);
+      }
       ps.forEach(function(pv){
         if(pv.p==="B"||pv.p==="W"){
           var rc=parseSgfC(pv.vs[0],boardSize);
           n.move=rc?{r:rc.r,c:rc.c,color:pv.p}:{pass:true,color:pv.p};
+          n.type="move";
         }
         if(pv.p==="C") n.comment=pv.vs[0]||"";
+        if(!isRoot&&(pv.p==="AB"||pv.p==="AW")){
+          pv.vs.forEach(function(v){
+            var rc=parseSgfC(v,boardSize);
+            if(rc) n.setupAdded.push({r:rc.r,c:rc.c,color:pv.p==="AB"?"B":"W"});
+          });
+        }
+        if(!isRoot&&pv.p==="AE"){
+          pv.vs.forEach(function(v){
+            var rc=parseSgfC(v,boardSize);
+            if(rc) n.setupRemoved.push({r:rc.r,c:rc.c});
+          });
+        }
       });
       return n;
     }
-    var chain=nodes.map(pn);
+    var chain=nodes.map(function(ps,i){ return pn(ps,i===0&&nodes.length>0); });
     for(var i=0;i<chain.length-1;i++) chain[i].children.push(chain[i+1]);
     vars.forEach(function(v){ if(v) chain[chain.length-1].children.push(v); });
     return chain[0];
@@ -388,9 +492,12 @@ function mirrorTree(node,size,mH,mV){
   function mm(m){ if(!m) return m; if(m.pass) return m; return {r:mr(m.r),c:mc(m.c),color:m.color}; }
   function ms(s){ var o={}; Object.keys(s).forEach(function(k){ var p=k.split(","); o[sk(mr(Number(p[0])),mc(Number(p[1])))]=s[k]; }); return o; }
   function ma(a){ return {r:mr(a.r),c:mc(a.c),type:a.type,label:a.label}; }
+  function msa(arr){ return (arr||[]).map(function(s){ return {r:mr(s.r),c:mc(s.c),color:s.color}; }); }
+  function msr(arr){ return (arr||[]).map(function(s){ return {r:mr(s.r),c:mc(s.c)}; }); }
   return {
-    id:node.id, move:mm(node.move), comment:node.comment, colorOffset:node.colorOffset||0,
+    id:node.id, type:node.type||"move", move:mm(node.move), comment:node.comment, colorOffset:node.colorOffset||0,
     setupStones:ms(node.setupStones||{}),
+    setupAdded:msa(node.setupAdded||[]), setupRemoved:msr(node.setupRemoved||[]),
     annotations:(node.annotations||[]).map(ma),
     children:node.children.map(function(ch){ return mirrorTree(ch,size,mH,mV); })
   };
@@ -400,9 +507,11 @@ function invertTree(node){
   function inv(c){ return c==="B"?"W":"B"; }
   function mm(m){ if(!m) return m; return {r:m.r,c:m.c,color:inv(m.color),pass:m.pass}; }
   function ms(s){ var o={}; Object.keys(s).forEach(function(k){ o[k]=inv(s[k]); }); return o; }
+  function isa(arr){ return (arr||[]).map(function(s){ return {r:s.r,c:s.c,color:inv(s.color)}; }); }
   return {
-    id:node.id, move:mm(node.move), comment:node.comment, colorOffset:node.colorOffset||0,
+    id:node.id, type:node.type||"move", move:mm(node.move), comment:node.comment, colorOffset:node.colorOffset||0,
     setupStones:ms(node.setupStones||{}),
+    setupAdded:isa(node.setupAdded||[]), setupRemoved:(node.setupRemoved||[]).map(function(s){ return{...s}; }),
     annotations:node.annotations||[],
     children:node.children.map(invertTree)
   };
@@ -458,16 +567,18 @@ function TreeDiagram(props){
       {flat.map(function(item){
         var cur=isCur(item.path);
         var act=onPath(item.path);
+        var nodeType=item.node.type||(item.path.length===0?"root":"move");
         var color=item.node.move&&!item.node.move.pass?item.node.move.color:null;
-        var fill=color==="B"?"#1a1a1a":color==="W"?"#f5f5f0":"#c8a96e";
+        var isSetupNode=nodeType==="setup";
+        var isRoot=item.path.length===0;
+        var fill=isSetupNode?"#C8A55A":isRoot?"#c8a96e":color==="B"?"#1a1a1a":color==="W"?"#f5f5f0":"#c8a96e";
         var stroke=cur?"#4A8870":act?"#5A4A30":"#C4BAA8";
         var strokeW=cur?3:1.5;
         var r=Math.round((cur?14:10)*zoom);
-        var hasSetup=item.path.length===0&&Object.keys(item.node.setupStones||{}).length>0;
-        var lbl=item.node.move?
+        var hasSetup=isRoot&&Object.keys(item.node.setupStones||{}).length>0;
+        var lbl=isSetupNode?"setup":item.node.move?
           (item.node.move.pass?(item.node.move.color+"ps"):coord(item.node.move.r,item.node.move.c,boardSize)):
-          (item.path.length===0?(hasSetup?"setup":"root"):"?");
-        if(hasSetup&&!item.node.move) fill="#C8A55A";
+          (isRoot?(hasSetup?"setup":"root"):"?");
         var tf=color==="B"?"#fff":color==="W"?"#333":"#fff";
         var key="n"+item.path.join("-")+item.node.id;
         return (
@@ -749,13 +860,12 @@ const TABS={library:"library",quiz:"quiz",editor:"editor",about:"about"};
 // Returns {path, childIdx} or null.
 function findPositionInJoseki(josekiRoot, currentStones){
   // Find path in josekiRoot where board state exactly matches currentStones
-  function stonesForPath(root,path){
-    var st={};
-    Object.keys(root.setupStones||{}).forEach(function(k){ st[k]=root.setupStones[k]; });
-    var n=root;
-    if(n.move&&!n.move.pass) st[sk(n.move.r,n.move.c)]=n.move.color;
-    for(var i=0;i<path.length;i++){ n=n.children[path[i]]; if(!n) break; if(n.move&&!n.move.pass) st[sk(n.move.r,n.move.c)]=n.move.color; }
-    return st;
+  var rootForState={...josekiRoot,_boardSize:josekiRoot._boardSize||19};
+  function stonesForPath(path){
+    var st=stateAlongPath(rootForState,path).stones;
+    var out={};
+    Object.keys(st).forEach(function(k){ out[k]=st[k].color!==undefined?st[k].color:st[k]; });
+    return out;
   }
   function boardsMatch(josekiSt,currentSt){
     var jk=Object.keys(josekiSt),ck=Object.keys(currentSt);
@@ -769,7 +879,7 @@ function findPositionInJoseki(josekiRoot, currentStones){
   var result=null;
   function walk(node,path){
     if(result) return;
-    var jsst=stonesForPath(josekiRoot,path);
+    var jsst=stonesForPath(path);
     if(boardsMatch(jsst,currentStones)){ result=path; return; }
     if(Object.keys(jsst).length<Object.keys(currentStones).length)
       node.children.forEach(function(ch,i){ walk(ch,path.concat(i)); });
@@ -779,18 +889,13 @@ function findPositionInJoseki(josekiRoot, currentStones){
 }
 
 function findMatchInJoseki(josekiRoot, currentStones, moveR, moveC, playerColor){
-  // Build the full stone map for a path (setup + sequence moves)
+  // Build the full stone map for a path using stateAlongPath (handles setup node deltas)
+  var rootForState2={...josekiRoot,_boardSize:josekiRoot._boardSize||19};
   function stonesForPath(root, path){
-    var st={};
-    // Setup stones at root
-    Object.keys(root.setupStones||{}).forEach(function(k){ st[k]=root.setupStones[k]; });
-    var n=root;
-    if(n.move&&!n.move.pass) st[sk(n.move.r,n.move.c)]=n.move.color;
-    for(var i=0;i<path.length;i++){
-      n=n.children[path[i]]; if(!n) break;
-      if(n.move&&!n.move.pass) st[sk(n.move.r,n.move.c)]=n.move.color;
-    }
-    return st;
+    var st=stateAlongPath(rootForState2,path).stones;
+    var out={};
+    Object.keys(st).forEach(function(k){ out[k]=st[k].color!==undefined?st[k].color:st[k]; });
+    return out;
   }
   // Check if joseki stone map matches the current board exactly (same keys, same colors)
   function boardsMatch(josekiSt, currentSt){
@@ -843,6 +948,8 @@ function App(){
   const[loaded,setLoaded]=useState(false);
   const[fetching,setFetching]=useState(false);
   const[tab,setTab]=useState(TABS.library);
+  const[searchQuery,setSearchQuery]=useState("");
+  const[showHelp,setShowHelp]=useState(false);
 
   useEffect(function(){
     var saved=loadLib();
@@ -1466,14 +1573,53 @@ function App(){
       setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
       setEditPath(function(p){ return p.concat(newLen); });
     } else if(editTool==="setup-B"||editTool==="setup-W"){
-      if(editPath.length>0) return;
       var color=editTool==="setup-B"?"B":"W";
-      setEditRoot(function(prev){
-        var cl=deepClone(prev);
-        if(cl.setupStones[key]) delete cl.setupStones[key];
-        else cl.setupStones[key]=color;
-        return cl;
-      });
+      // Block if point has a numbered move stone
+      var existingStone=editStones[key];
+      if(existingStone&&existingStone.moveNum!==null) return;
+      var isRemoving=existingStone&&existingStone.moveNum===null;
+      var isReplacingOpposite=!isRemoving&&existingStone&&existingStone.color!==color;
+      if(editPath.length===0){
+        // Root node: modify setupStones directly (existing behaviour)
+        setEditRoot(function(prev){
+          var cl=deepClone(prev);
+          if(isRemoving) delete cl.setupStones[key];
+          else cl.setupStones[key]=color;
+          return cl;
+        });
+      } else if(editNode.type==="setup"){
+        // Already in a setup node: modify its deltas in place
+        setEditRoot(function(prev){
+          var cl=deepClone(prev);
+          var n=nodeAtPath(cl,editPath);
+          if(isRemoving){
+            // Remove from setupAdded if it was added here, otherwise add to setupRemoved
+            var ai=n.setupAdded.findIndex(function(s){ return s.r===r&&s.c===c; });
+            if(ai!==-1) n.setupAdded.splice(ai,1);
+            else n.setupRemoved.push({r:r,c:c});
+          } else {
+            if(isReplacingOpposite){
+              // Remove any existing entry for this point in either list
+              n.setupAdded=n.setupAdded.filter(function(s){ return !(s.r===r&&s.c===c); });
+              n.setupRemoved=n.setupRemoved.filter(function(s){ return !(s.r===r&&s.c===c); });
+              n.setupRemoved.push({r:r,c:c});
+            }
+            // Remove from setupRemoved if present, then add to setupAdded
+            n.setupRemoved=n.setupRemoved.filter(function(s){ return !(s.r===r&&s.c===c); });
+            n.setupAdded=n.setupAdded.filter(function(s){ return !(s.r===r&&s.c===c); });
+            n.setupAdded.push({r:r,c:c,color:color});
+          }
+          return cl;
+        });
+      } else {
+        // Non-setup node: create a new setup child and navigate into it
+        var added2=isRemoving?[]:[{r:r,c:c,color:color}];
+        var removed2=isRemoving?[{r:r,c:c}]:(isReplacingOpposite?[{r:r,c:c}]:[]);
+        var nn=makeSetupNode(added2,removed2);
+        var newLen=editNode.children.length;
+        setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
+        setEditPath(function(p){ return p.concat(newLen); });
+      }
     } else if(editTool==="letter"){
       if(letterCount>=26) return;
       setEditRoot(function(prev){
@@ -1641,39 +1787,31 @@ function App(){
       var playerGoesFirst=role==="player1"?true:role==="player2"?false:Math.random()<0.5;
       effectivePc=playerGoesFirst?firstMoveColor:secondMoveColor;
     }
-    var initStones={};
-    var setup=root.setupStones||{};
-    Object.keys(setup).forEach(function(k){ initStones[k]={color:setup[k],moveNum:null}; });
+    var rootForState={...root,_boardSize:entry.boardSize};
+    // Always use stateAlongPath so setup node deltas are accumulated correctly
+    var initStones=stateAlongPath(rootForState,[]).stones;
     // Pick a random start node if randomNode is enabled
     var startPath=[];
     if(s.randomNode){
-      // Collect all non-leaf paths (nodes with children) so practice is meaningful
+      // Collect all non-setup, non-root nodes that have at least one move child.
+      // Use nextMoveColor (not parity) so josekis starting with White work correctly.
       var candidates=[];
-      var firstColor=(root.children&&root.children[0]&&root.children[0].move)?root.children[0].move.color:"B";
       function collectPaths(node,path){
-        if(node.children&&node.children.length>0){
-          if(path.length>0){
-            var nextColor=path.length%2===0?firstColor:(firstColor==="B"?"W":"B");
-            var hasPlayerMove=node.children.some(function(ch){
-              return ch.move&&!ch.move.pass&&ch.move.color===nextColor;
-            });
-            if(hasPlayerMove) candidates.push(path);
-          }
-          node.children.forEach(function(ch,i){ collectPaths(ch,path.concat(i)); });
+        if(!node.children||!node.children.length) return;
+        if(path.length>0&&(node.type||"move")!=="setup"){
+          var nc=nextMoveColor(node);
+          if(nc) candidates.push(path);
         }
+        node.children.forEach(function(ch,i){ collectPaths(ch,path.concat(i)); });
       }
       collectPaths(root,[]);
       if(candidates.length>0){
         startPath=candidates[Math.floor(Math.random()*candidates.length)];
-        // Recompute initStones from stateAlongPath at startPath
-        var rootForState={...root,_boardSize:entry.boardSize};
         var startState=stateAlongPath(rootForState,startPath);
         initStones=startState.stones;
-        // Derive player color from whoever moves next at this node
+        // Derive player color from nextMoveColor at chosen node
         var startNode=nodeAtPath(root,startPath);
-        if(startNode&&startNode.children&&startNode.children[0]&&startNode.children[0].move){
-          effectivePc=startNode.children[0].move.color;
-        }
+        effectivePc=nextMoveColor(startNode)||effectivePc;
       }
     }
     qPathRef.current=startPath;
@@ -1685,18 +1823,16 @@ function App(){
     setTab(TABS.quiz);
   }
   function restartQuiz(){
-    if(!qEntry||!qRoot) return;
-    // Reset to the same start path chosen at quiz start (preserves random node choice)
-    var rootForState={...qRoot,_boardSize:qEntry.boardSize};
-    var initStones={};
-    var setup=qRoot.setupStones||{};
-    Object.keys(setup).forEach(function(k){ initStones[k]={color:setup[k],moveNum:null}; });
-    if(qStartPath.length>0){
-      var startState=stateAlongPath(rootForState,qStartPath);
-      initStones=startState.stones;
+    if(!qEntry) return;
+    // If randomNode is enabled AND not started from tree navigator, re-run full startQuiz
+    if(qSettings.randomNode&&qStartPath.length===0){
+      startQuiz(qEntry);
+      return;
     }
-    // Re-randomise player color if role is random and this is a normal root-start session
-    // (not a random-node start or tree-navigator-selected node)
+    if(!qRoot) return;
+    // Otherwise reset to the same start path (preserves tree-navigator-selected node)
+    var rootForState={...qRoot,_boardSize:qEntry.boardSize};
+    var initStones=stateAlongPath(rootForState,qStartPath).stones;
     var newPlayerColor=qPlayerColor;
     if(qSettings.playerRole==="random"&&qStartPath.length===0){
       var firstMoveColor=(qRoot.children&&qRoot.children[0]&&qRoot.children[0].move)
@@ -1726,8 +1862,7 @@ function App(){
   // qIsPlayer: true if the next move to be played belongs to the player.
   // We derive this from the actual color of the first child's move rather than
   // turnAtPath, which can be confused by colorOffset after invertTree.
-  var qNextMoveColor=(qNode&&qNode.children&&qNode.children[0]&&qNode.children[0].move)
-    ?qNode.children[0].move.color:qNextColor;
+  var qNextMoveColor=qNode?nextMoveColor(qNode):qNextColor;
   var qIsPlayer=qNextMoveColor===qPlayerColor;
   // qWrongContinuations is used directly for both hint and wrong-move ghost stones
   var qCurComment=(function(){
@@ -1757,15 +1892,46 @@ function App(){
 
   useEffect(function(){
     if(tab!==TABS.quiz||!qNode||qStatus!=="waiting") return;
-    if(!qNode.children||!qNode.children.length){ setQPendingOpp(null); setQStatus("done"); return; }
-    if(qIsPlayer){ setQPendingOpp(null); return; }
-    var idx=Math.floor(Math.random()*qNode.children.length);
-    var child=qNode.children[idx];
-    if(!child.move){ setQStatus("done"); return; }
-    if(!showAnnotationsRef.current){
-      // Auto-play opponent after a short pause so player's stone sound registers first
+
+    // Step 1: Run pre-step to resolve any setup nodes before determining whose turn it is.
+    // resolveSetupPreStep picks randomly from all children; if a setup child is picked,
+    // it applies the delta and recurses. Stops when a move child is reached or terminal.
+    var preStones=Object.assign({},qStones);
+    var pre=resolveSetupPreStep(qNode, qPath, preStones);
+    if(pre.path.length>qPath.length){
+      // Setup nodes were traversed -- update state and let effect re-fire
+      qPathRef.current=pre.path;
+      setQPath(pre.path);
+      setQStones(pre.stones);
+      return;
+    }
+
+    // Step 2: Determine whose turn it is from the resolved node
+    var resolvedNode=pre.node;
+    var nextColor=nextMoveColor(resolvedNode);
+    if(!nextColor){ setQPendingOpp(null); setQStatus("done"); return; }
+    var isPlayerTurn=nextColor===qPlayerColor;
+
+    // Step 3: If player's turn, wait for input
+    if(isPlayerTurn){ setQPendingOpp(null); return; }
+
+    // Step 4: Opponent's turn -- pick a move child of opponent color
+    var oppColor=qPlayerColor==="B"?"W":"B";
+    var oppKids=resolvedNode.children.map(function(ch,i){ return {ch:ch,i:i}; })
+      .filter(function(x){ return x.ch.move&&x.ch.move.color===oppColor; });
+    if(!oppKids.length){ setQPendingOpp(null); setQStatus("done"); return; }
+    var pick=oppKids[Math.floor(Math.random()*oppKids.length)];
+    var child=pick.ch; var idx=pick.i;
+
+    // Only pause for ghost stone if showAnnotations is on AND the resulting
+    // position has a comment, letter annotation, or triangle marker.
+    var nextNode=child;
+    var hasContent=showAnnotationsRef.current&&(
+      (nextNode.comment&&nextNode.comment.trim().length>0)||
+      (nextNode.annotations&&nextNode.annotations.some(function(a){ return a.type==="letter"||a.type==="triangle"; }))
+    );
+    if(!hasContent){
       var oppMove=child.move;
-      var oppIdx=idx;
       setTimeout(function(){
         if(!oppMove.pass){
           var oppResult=applyMove(qStones,oppMove.r,oppMove.c,oppMove.color,qEntry.boardSize);
@@ -1775,21 +1941,20 @@ function App(){
           setQOppTenuki(true); setQCorrectTenuki(false);
         }
         setQPendingOpp(null);
-        setQPath(function(p){ return p.concat(oppIdx); });
+        var finalPath=qPath.concat(idx);
+        qPathRef.current=finalPath;
+        setQPath(finalPath);
       }, 350);
     } else {
-      // Show ghost stone, wait for tap to confirm - sound plays when user taps
       setQPendingOpp({move:child.move,childIdx:idx});
     }
   },[tab,qPath,qStatus,qIsPlayer]);
 
 
-  function buildWrongContinuations(kids){
-    // Collect valid player moves from current joseki
-    var moves=[];
+  function buildWrongContinuations(currentNode){
+    // Collect valid player moves from current joseki (including through setup branches)
     var seen={};
-    kids.filter(function(ch){ return ch.move&&!ch.move.pass&&ch.move.color===qPlayerColor; })
-      .forEach(function(ch){ var k=sk(ch.move.r,ch.move.c); if(!seen[k]){ seen[k]=true; moves.push({r:ch.move.r,c:ch.move.c,color:ch.move.color}); } });
+    var moves=collectReachableMoves(currentNode,qPlayerColor,qStones,seen);
     // Also collect valid moves from other enabled josekis at same position
     // Apply the same transform that was applied to the active joseki so coordinates match
     enabledEntries.forEach(function(candidate){
@@ -1818,7 +1983,7 @@ function App(){
 
     // In wrong/review mode: if tap is on a valid continuation, place it immediately.
     // If tap is elsewhere, enter review mode (continuations stay, buttons appear).
-    if(qStatus==="wrong"||qStatus==="review"){
+    if(qStatus==="wrong"){
       if(r>=0&&c>=0){
         // Check if tap is on one of the shown continuations
         var revConts=qWrongContinuations;
@@ -1830,7 +1995,7 @@ function App(){
           var revKids=revNode?revNode.children||[]:[];
           var revMi=revKids.findIndex(function(ch){ return ch.move&&!ch.move.pass&&ch.move.r===r&&ch.move.c===c&&ch.move.color===qPlayerColor; });
           if(revMi!==-1){
-            var revCh=revKids[revMi];
+            var revCh=revKids[revMi]; // revMi is already index into revKids (all children)
             var revResult=applyMove(qStones,r,c,revCh.move.color,qEntry.boardSize);
             if(revResult.captured>0) playCapture(revResult.captured); else playTok();
             var revNewPath=revPath.concat(revMi);
@@ -1868,14 +2033,9 @@ function App(){
           return;
         }
       }
-      // Tap not on a continuation: if still "wrong", dismiss marker
-      // For tenuki wrong moves, go back to "waiting" directly (no continuations to review)
-      // For normal wrong moves, go to "review" so player can explore continuations
-      if(qStatus==="wrong"){
-        setQWrong(null);
-        if(qWrongIsTenuki){ setQWrongIsTenuki(false); setQStatus("waiting"); }
-        else { setQStatus("review"); }
-      }
+      // Tap not on a continuation: clear everything and return to waiting in one step
+      setQWrong(null); setQWrongContinuations([]); setQHint(false);
+      setQWrongIsTenuki(false); setQStatus("waiting");
       return;
     }
 
@@ -1904,12 +2064,26 @@ function App(){
     var activeNode=nodeAtPath(qRoot,activePath);
     if(!activeNode) return;
 
-    var kids=activeNode.children||[];
-    if(!kids.length){ setQStatus("done"); return; }
+    // Pre-step: resolve any setup nodes before checking valid moves.
+    // This mirrors what the opponent useEffect does -- if already resolved, this is a no-op.
+    var pre=resolveSetupPreStep(activeNode, activePath, Object.assign({},activeStones));
+    if(pre.path.length>activePath.length){
+      activePath=pre.path;
+      activeStones=pre.stones;
+      activeNode=pre.node;
+      qPathRef.current=activePath;
+      setQPath(activePath);
+      setQStones(activeStones);
+    }
+
+    // All move children (for path indexing)
+    var kids=(activeNode.children||[]).filter(function(ch){ return ch.move; });
+    // Player-color move children (for done-check)
+    var playerKids=kids.filter(function(ch){ return ch.move.color===qPlayerColor; });
+    if(!playerKids.length){ setQStatus("done"); return; }
 
     // Handle tenuki sentinel (r=-1,c=-1)
     if(r<0||c<0){
-      // r<0,c<0 is the tenuki signal - handle directly without qTenuki state
       var pi=kids.findIndex(function(ch){ return ch.move&&ch.move.pass&&ch.move.color===qPlayerColor; });
       if(pi!==-1){
         var tenukiPath=activePath.concat(pi);
@@ -1928,13 +2102,13 @@ function App(){
         setQScore(function(s){ return {c:s.c,w:s.w+1}; });
         setQSession(function(ss){ return {points:ss.points, streak:0, totalC:ss.totalC, totalW:ss.totalW+1}; });
         setQStatus("wrong");
-        setQWrongContinuations(buildWrongContinuations(kids));
+        setQWrongContinuations(buildWrongContinuations(activeNode));
         setQWrongWasTenuki(true);
       }
       return;
     }
 
-    // Find if this intersection matches a valid child move
+    // Find if this intersection matches a valid player move child
     var mi=kids.findIndex(function(ch){ return ch.move&&!ch.move.pass&&ch.move.r===r&&ch.move.c===c&&ch.move.color===qPlayerColor; });
     if(mi!==-1){
       // Correct move in current joseki
@@ -1953,8 +2127,23 @@ function App(){
         return {points:ss.points+pts, streak:newStreak, totalC:ss.totalC+1, totalW:ss.totalW};
       });
       setQOppTenuki(false);
-      setQHint(false); setQWrongContinuations([]); setQStatus("correct");
-      setTimeout(function(){ setQPath(newActivePath); setQStatus("waiting"); },850);
+      setQHint(false); setQWrongContinuations([]);
+      // Check if the new node has content (comment or annotation)
+      // If so, advance path immediately and let opponent scheduling show ghost stone
+      // If not, show "correct" flash and auto-advance after delay
+      var newNode=ch;
+      var newNodeHasContent=showAnnotationsRef.current&&(
+        (newNode.comment&&newNode.comment.trim().length>0)||
+        (newNode.annotations&&newNode.annotations.some(function(a){ return a.type==="letter"||a.type==="triangle"; }))
+      );
+      if(newNodeHasContent){
+        // Advance immediately — opponent scheduling will show ghost stone + "Tap to continue"
+        setQPath(newActivePath);
+        setQStatus("waiting");
+      } else {
+        setQStatus("correct");
+        setTimeout(function(){ setQPath(newActivePath); setQStatus("waiting"); },850);
+      }
     } else {
       // Not in current joseki -- try dynamic switch to another enabled joseki
       var switched=false;
@@ -1995,19 +2184,34 @@ function App(){
         setQScore(function(s){ return {c:s.c,w:s.w+1}; });
         setQSession(function(ss){ return {points:ss.points, streak:0, totalC:ss.totalC, totalW:ss.totalW+1}; });
         setQStatus("wrong");
-        setQWrongContinuations(buildWrongContinuations(kids));
+        setQWrongContinuations(buildWrongContinuations(activeNode));
         // If all correct continuations are pass moves, flag it so the UI
         // can show a message directing the player to use the Tenuki button
-        var allPass=kids.length>0&&kids.every(function(ch){ return !ch.move||ch.move.pass; });
+        var allPass=playerKids.length>0&&playerKids.every(function(ch){ return !ch.move||ch.move.pass; });
         setQWrongIsTenuki(allPass);
         // Player taps board anywhere to dismiss wrong marker and try again
       }
     }
   }
 
-  var folderEntries=function(id){ return entries.filter(function(e){ return e.folderId===id; })
+  var searchQ=searchQuery.trim().toLowerCase();
+  var visibleEntries=searchQ
+    ? entries.filter(function(e){
+        if(e.name&&e.name.toLowerCase().includes(searchQ)) return true;
+        var f=folders.find(function(f){ return f.id===e.folderId; });
+        return f&&f.name&&f.name.toLowerCase().includes(searchQ);
+      })
+    : entries;
+  var visibleEntryIds=new Set(visibleEntries.map(function(e){ return e.id; }));
+  // A folder is visible if any joseki in its subtree (recursively) is visible
+  function folderHasVisible(folderId){
+    if(visibleEntries.some(function(e){ return e.folderId===folderId; })) return true;
+    return folders.filter(function(f){ return f.parentId===folderId; })
+      .some(function(sf){ return folderHasVisible(sf.id); });
+  }
+  var folderEntries=function(id){ return visibleEntries.filter(function(e){ return e.folderId===id; })
     .sort(function(a,b){ return a.name.localeCompare(b.name); }); };
-  var unfoldered=entries.filter(function(e){ return !e.folderId; });
+  var unfoldered=visibleEntries.filter(function(e){ return !e.folderId; });
 
   function Toggle(props){
     return (
@@ -2094,7 +2298,7 @@ function App(){
 
   var tools=[
     {id:"stone",label:"Stone"},{id:"setup-B",label:"Setup Black"},{id:"setup-W",label:"Setup White"},
-    {id:"letter",label:"Continuations"},{id:"triangle",label:"Mark Stones"}
+    {id:"letter",label:"Mark Positions"},{id:"triangle",label:"Mark Stones"}
   ];
 
   function renderEntry(entry){
@@ -2234,8 +2438,8 @@ function App(){
         </div>
         {!folder.collapsed&&(
           <div style={{paddingLeft:"0.75rem"}}>
-            {subFolders.map(function(sf){ return renderFolder(sf,depth+1); })}
-            {fEntries.length===0&&subFolders.length===0&&<p style={{fontSize:"0.76rem",color:"var(--color-text-tertiary)",padding:"0.3rem 0.5rem",fontStyle:"italic"}}>Empty folder</p>}
+            {subFolders.filter(function(sf){ return !searchQ||folderHasVisible(sf.id); }).map(function(sf){ return renderFolder(sf,depth+1); })}
+            {fEntries.length===0&&subFolders.filter(function(sf){ return !searchQ||folderHasVisible(sf.id); }).length===0&&<p style={{fontSize:"0.76rem",color:"var(--color-text-tertiary)",padding:"0.3rem 0.5rem",fontStyle:"italic"}}>{searchQ?"No matches":"Empty folder"}</p>}
             {fEntries.map(function(entry){ return renderEntry(entry); })}
           </div>
         )}
@@ -2253,9 +2457,13 @@ function App(){
           {" "}Joseki Sage
         </div>
         <div className="spacer"/>
+        {(tab===TABS.quiz||tab===TABS.editor)&&(
+          <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30"}} onClick={function(){ setShowHelp(true); }}>Help</button>
+        )}
         {tab===TABS.library&&(
           <span>
             <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30",marginRight:4}} onClick={function(){ setTab(TABS.about); }}>About</button>
+            <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30",marginRight:4}} onClick={function(){ setShowHelp(true); }}>Help</button>
             <div style={{position:"relative",display:"inline-block"}} onClick={function(e){ e.stopPropagation(); }}>
               <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30"}}
                 onClick={function(){ setShowExportMenu(function(v){ return !v; }); setShowImportMenu(false); }}>Download</button>
@@ -2290,6 +2498,22 @@ function App(){
         <div className="con">
           <p className="ptitle">Joseki Library</p>
           <p className="psub">Toggle On/Off to include in quiz pool.</p>
+          <div style={{marginBottom:"0.65rem",position:"relative"}}>
+            <input className="inp" style={{marginBottom:0,paddingLeft:"2rem"}}
+              placeholder="Search joseki and folders..."
+              value={searchQuery}
+              onChange={function(e){ setSearchQuery(e.target.value); }}/>
+            <svg style={{position:"absolute",left:"0.5rem",top:"50%",transform:"translateY(-50%)",pointerEvents:"none",opacity:0.4}}
+              width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            {searchQuery&&(
+              <button onClick={function(){ setSearchQuery(""); }}
+                style={{position:"absolute",right:"0.4rem",top:"50%",transform:"translateY(-50%)",
+                  background:"none",border:"none",cursor:"pointer",color:"var(--color-text-tertiary)",
+                  fontSize:"1rem",lineHeight:1,padding:"0 2px"}}>×</button>
+            )}
+          </div>
           {fetching&&(
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"2.5rem 1rem",gap:"1rem"}}>
               <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
@@ -2333,7 +2557,7 @@ function App(){
             </select>
             <button className="btn btnsm" onClick={addFolder} disabled={!newFolderName.trim()}>+ Folder</button>
           </div>
-          {folders.filter(function(f){ return !f.parentId; }).sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(folder){ return renderFolder(folder,0); })}
+          {folders.filter(function(f){ return !f.parentId&&(!searchQ||folderHasVisible(f.id)); }).sort(function(a,b){ return a.name.localeCompare(b.name); }).map(function(folder){ return renderFolder(folder,0); })}
           {unfoldered.map(function(entry){ return renderEntry(entry); })}
           {entries.length===0&&!fetching&&<div className="empty">No josekis yet. Tap "+ New".</div>}
           </span>)}
@@ -2478,7 +2702,7 @@ function App(){
                     showCoords={true}
                     annotations={qAnnotations}
                     nextColor={qNextMoveColor}
-                    noHover={!!qPendingOpp||qStatus==="review"||qStatus==="done"}/>
+                    noHover={!!qPendingOpp||qStatus==="wrong"||qStatus==="done"}/>
                 </div>
               </div>
               <p style={{fontSize:"0.71rem",color:"var(--color-text-tertiary)",marginBottom:"0.55rem"}}>
@@ -2497,8 +2721,7 @@ function App(){
                   <button className="btn btnsm" onClick={function(){
                     if(qHint){ setQHint(false); setQWrongContinuations([]); }
                     else {
-                      var kids=qNode?qNode.children||[]:[];
-                      setQWrongContinuations(buildWrongContinuations(kids));
+                      setQWrongContinuations(buildWrongContinuations(qNode));
                       setQHint(true);
                     }
                   }}>{qHint?"Hide hint":"Hint"}</button>
@@ -2510,22 +2733,7 @@ function App(){
                       handleQuizBoardClick(-1,-1);
                     }}>Tenuki</button>
                 )}
-                {qStatus==="review"&&(
-                  <span style={{display:"flex",gap:"0.28rem",flexWrap:"wrap"}}>
-                    <button className="btn btnsm" onClick={function(){
-                      setQWrongContinuations([]); setQHint(false);
-                      startQuiz(qEntry);
-                    }}>Restart</button>
-                    {enabledEntries.length>1&&(
-                      <button className="btn btnsm" onClick={function(){
-                        setQWrongContinuations([]); setQHint(false);
-                        var next=enabledEntries[Math.floor(Math.random()*enabledEntries.length)];
-                        setQSession(function(ss){ return ss; }); // keep session
-                        startQuiz(next);
-                      }}>Random</button>
-                    )}
-                  </span>
-                )}
+
               </div>
               {(qStatus==="wrong"&&qWrongIsTenuki)&&(
                 <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
@@ -2553,6 +2761,12 @@ function App(){
                   padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
                   color:"#7A5A10",lineHeight:1.5}}>
                   Opponent tenuki.
+                </div>
+              )}
+              {(qPendingOpp&&qPendingOpp.move&&!qPendingOpp.move.pass)&&(
+                <div style={{fontSize:"0.78rem",color:"var(--color-text-tertiary)",
+                  fontStyle:"italic",marginBottom:"0.35rem",textAlign:"center"}}>
+                  Tap the board to continue
                 </div>
               )}
               {(qPendingOpp&&qPendingOpp.move&&qPendingOpp.move.pass)&&(
@@ -2622,8 +2836,7 @@ function App(){
           </div>
           <div className="toolrow">
             {tools.filter(function(t){
-              // Setup tools only available at root node (editPath.length===0)
-              if((t.id==="setup-B"||t.id==="setup-W")&&editPath.length>0) return false;
+              // Setup tools available at all nodes
               return true;
             }).map(function(t){
               return <button key={t.id} className={"tbtn"+(editTool===t.id?" on":"")} onClick={function(){
@@ -2644,7 +2857,6 @@ function App(){
               <select value={editSize} onChange={function(e){ setEditSize(Number(e.target.value)); setEditRoot(rootNode()); setEditPath([]); }}>
                 <option value={9}>9x9</option><option value={13}>13x13</option><option value={19}>19x19</option>
               </select>
-              <button className={"tbtn"+(editShowNums?" on":"")} onClick={function(){ setEditShowNums(function(v){ return !v; }); }}>123</button>
               <select value={editView} onChange={function(e){
                 var newView=e.target.value;
                 setEditView(newView);
@@ -2728,7 +2940,7 @@ function App(){
                   flipped={editFlipped} showCoords={true}
                   branchPoints={editBranches}
                   annotations={editAnnotations}
-                  showNumbers={editShowNums}
+                  showNumbers={true}
                   nextColor={(editTool==="setup-B")?"B":(editTool==="setup-W")?"W":editTurn}
                   viewMode={editView} viewRot={editViewRot}/>
               </div>
@@ -2944,11 +3156,9 @@ function App(){
                   {/* Start practice from selected node button */}
                   <div style={{marginTop:"auto",display:"flex",flexDirection:"column",gap:"0.4rem"}}>
                     <button className="btn btnp btnsm" onClick={function(){
-                      // Derive player color from first child's move at selected node
+                      // Derive player color from nextMoveColor at selected node
                       var selNode=nodeAtPath(qRoot,qTreeModalPath);
-                      var firstChild=selNode&&selNode.children&&selNode.children[0];
-                      var firstChildColor=firstChild&&firstChild.move&&!firstChild.move.pass
-                        ? firstChild.move.color : "B";
+                      var firstChildColor=nextMoveColor(selNode)||"B";
                       // Compute stones at selected path
                       var rootForState={...qRoot,_boardSize:pSize};
                       var selState=stateAlongPath(rootForState,qTreeModalPath);
@@ -3274,6 +3484,117 @@ function App(){
 
           <div style={{textAlign:"center",marginTop:"1.5rem"}}>
             <button className="btn btnsm" onClick={function(){ setTab(TABS.library); }}>Back to Library</button>
+          </div>
+        </div>
+      )}
+
+      {showHelp&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:300,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"1.5rem 0.75rem"}}
+          onClick={function(e){ if(e.target===e.currentTarget) setShowHelp(false); }}>
+          <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:10,width:"100%",maxWidth:640,boxShadow:"0 8px 32px rgba(0,0,0,0.35)",position:"relative"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0.9rem 1.1rem",borderBottom:"0.5px solid var(--color-border-secondary)"}}>
+              <span style={{fontWeight:600,fontSize:"0.9rem",color:"var(--color-text-primary)"}}>
+                {tab===TABS.library?"Help — Library":tab===TABS.quiz&&!qEntry?"Help — Practice Settings":tab===TABS.quiz?"Help — Practice Mode":"Help — Editor"}
+              </span>
+              <button onClick={function(){ setShowHelp(false); }}
+                style={{background:"none",border:"none",cursor:"pointer",color:"var(--color-text-secondary)",fontSize:"1.3rem",lineHeight:1,padding:"0 2px"}}>×</button>
+            </div>
+            <div style={{padding:"1.1rem 1.25rem",fontSize:"0.85rem",lineHeight:1.75,color:"var(--color-text-secondary)",maxHeight:"80vh",overflowY:"auto"}}>
+              {(function(){
+                function H2(props){ return <p style={{fontWeight:600,fontSize:"0.9rem",color:"var(--color-text-primary)",marginTop:"1.2rem",marginBottom:"0.3rem"}}>{props.children}</p>; }
+                function P(props){ return <p style={{marginBottom:"0.6rem"}}>{props.children}</p>; }
+                function B(props){ return <strong>{props.children}</strong>; }
+                function Li(props){ return <li style={{marginBottom:"0.3rem"}}>{props.children}</li>; }
+
+                if(tab===TABS.library) return (
+                  <div>
+                    <P>The Library is the home screen of Joseki Sage. It shows all your joseki organized into folders, and is the starting point for both practice and editing.</P>
+                    <H2>Search</H2>
+                    <P>Use the search box at the top of the library to filter joseki in real time by name or folder name, across both Default and Custom libraries. Click × to clear the search.</P>
+                    <H2>Folders</H2>
+                    <P>Joseki are organized into two top-level libraries: <B>Default</B> and <B>Custom</B>. Within each you can create named folders to group related joseki.</P>
+                    <P>When first opened in a browser, the app automatically fetches the Default Library. If opened from a local file, it starts with a small demo library — import the full default library manually via the Import menu.</P>
+                    <P><B>Creating a folder:</B> Enter a name in the folder field and tap + Folder.</P>
+                    <P><B>Renaming or deleting a folder:</B> Tap the ⋮ options next to the folder name. Deleting a folder also deletes all joseki inside it. This cannot be undone.</P>
+                    <P><B>Moving joseki between folders:</B> Open the joseki editor and change the Folder field at the top.</P>
+                    <H2>Joseki List</H2>
+                    <P>The toggle next to each joseki controls whether it is included in practice. You can enable or disable all joseki in a folder at once using the folder toggle.</P>
+                    <P><B>Practicing a single joseki:</B> Tap a joseki name to open it, then tap Practice.</P>
+                    <P><B>Editing a joseki:</B> Tap a joseki name to open it, then tap Edit.</P>
+                    <P><B>Deleting a joseki:</B> Open the joseki and tap Delete. This cannot be undone.</P>
+                    <H2>Importing and Exporting</H2>
+                    <P>Use the <B>Download</B> and <B>Import</B> menus in the top bar to back up or restore your library. Files are named JS-Custom-Library.json or JS-Default-Library.json. A copy of the default library is available at the GitHub repository.</P>
+                    <P>Importing completely replaces the existing library — export a backup first. To transfer between devices, export on the source, transfer the file, and import on the target.</P>
+                  </div>
+                );
+
+                if(tab===TABS.quiz&&!qEntry) return (
+                  <div>
+                    <P>The Practice Settings panel controls how practice sessions behave. Settings are saved automatically.</P>
+                    <H2>Player Role</H2>
+                    <P><B>Random (default)</B> — The app randomly assigns you to play the first or second color each session. <B>Player 1</B> and <B>Player 2</B> fix your role. Note joseki do not always start with Black.</P>
+                    <H2>Random Node Start</H2>
+                    <P>When enabled, each session begins at a randomly chosen node in the tree rather than the root — useful for drilling specific continuations. Tapping Retry picks a new random node.</P>
+                    <H2>Mirror Board</H2>
+                    <P>Randomly mirrors the board horizontally and/or vertically each session, training pattern recognition across all orientations. Coordinate labels in comments adjust automatically.</P>
+                    <H2>Invert Colors</H2>
+                    <P>Randomly swaps Black and White each session. Combined with Mirror Board, each joseki can be practiced in up to 8 orientations.</P>
+                    <H2>Show Hints</H2>
+                    <P>Controls whether the Hint button is available during practice. When enabled, tapping Hint shows ghost stones at all valid continuation points.</P>
+                    <H2>Show Annotations</H2>
+                    <P>When enabled, the app pauses after opponent moves only when the resulting position has a comment, letter annotation, or triangle marker — positions with no content auto-advance as normal. When disabled, all opponent moves auto-advance immediately.</P>
+                    <H2>Scoring</H2>
+                    <P>Correct moves earn points with a streak multiplier: 1× base, rising to 3× after 5+ consecutive correct moves. A wrong move resets the streak. Disable to hide scoring entirely.</P>
+                  </div>
+                );
+
+                if(tab===TABS.quiz) return (
+                  <div>
+                    <P>Practice mode quizzes you on your selected joseki. The app plays the opponent automatically and waits for you to place your stone.</P>
+                    <H2>Placing a Move</H2>
+                    <P>Tap a point on the board. A correct move is accepted and the opponent responds. If the correct continuation is to play elsewhere (tenuki), tap the <B>Tenuki</B> button.</P>
+                    <H2>Setup Stones</H2>
+                    <P>If the joseki contains setup branches, the board may update silently before your turn — stones appear without a sound or number. These represent assumed board conditions (e.g. whether a ladder breaker is present) chosen randomly from the available setup variations.</P>
+                    <H2>Wrong Moves</H2>
+                    <P>A wrong move is marked in red and ghost stones show all valid continuations. Tap a ghost stone to play that continuation, or tap elsewhere to dismiss and try again from the same position.</P>
+                    <H2>Hints</H2>
+                    <P>If hints are enabled in settings, tap <B>Hint</B> to reveal ghost stones at all valid continuation points. Requesting a hint does not count as a wrong move.</P>
+                    <H2>Tree Navigator</H2>
+                    <P>Tap <B>Open Joseki Tree</B> to browse the full joseki tree. Select any node and tap <B>Start practice from here</B> to begin at that position. Retry will return to the same node.</P>
+                    <H2>Opponent Moves</H2>
+                    <P>The opponent plays automatically after a short pause. If Show Annotations is on and the resulting position has a comment or annotation, the app shows a ghost stone and waits for you to tap it before advancing.</P>
+                    <H2>End of Joseki</H2>
+                    <P>When no further continuations exist, tap <B>Retry</B> to replay the same joseki or <B>Random</B> to move to a new one.</P>
+                    <H2>Switching Joseki</H2>
+                    <P>If your move is valid in a different joseki in your library, the app seamlessly switches to it and continues. You are never penalized for a move that is correct in another enabled joseki.</P>
+                  </div>
+                );
+
+                // Editor
+                return (
+                  <div>
+                    <P>The Editor lets you create new joseki from scratch or modify existing ones. Changes are saved manually using the <B>Save</B> button.</P>
+                    <H2>Board Tools</H2>
+                    <P><B>Stone</B> — Places moves in sequence. If the position already exists as a child, the tree navigates into it.</P>
+                    <P><B>Setup Black / Setup White</B> — Places setup stones that represent assumed board conditions. They do not count as moves. At non-root nodes, each change creates a setup branch (see below).</P>
+                    <P><B>Tenuki</B> — Records a pass move representing a move played elsewhere on the board.</P>
+                    <P><B>Mark Positions</B> — Adds letter annotations (A–Z) to board points, used with position comments to describe variations.</P>
+                    <P><B>Mark Stones</B> — Adds a triangle marker to a stone on the board.</P>
+                    <P><B>Undo</B> — Removes the last move (if it has no children). <B>Del Subtree</B> — Removes the current node and all descendants. Cannot be undone.</P>
+                    <H2>Board View</H2>
+                    <P>Full / Half / Quarter views change the display only, not the joseki data. Use Rotate to cycle orientations. Board size (9×9, 13×13, 19×19) cannot be changed after saving.</P>
+                    <H2>Navigation</H2>
+                    <P>Use <B>Back</B> to step back. Branch buttons below the move label navigate between alternative continuations. The expand icon (⤢) opens the full tree navigator.</P>
+                    <H2>Position Comment</H2>
+                    <P>Attach a text note to the current position. Displayed during practice when Show Annotations is enabled. Supports Markdown-style links: [text](url).</P>
+                    <H2>Setup Branches</H2>
+                    <P>Setup stones at non-root nodes create conditional variations modeling how the joseki changes when specific stones exist elsewhere (e.g. ladder breakers). Add and remove setup stones freely within a setup node; playing a move starts a new move node. In practice, setup branches are resolved silently at random before your turn.</P>
+                    <H2>SGF</H2>
+                    <P><B>Export SGF</B> — Saves as SGF with non-root setup stones as AB/AW/AE properties. <B>Import SGF</B> — Creates a new joseki from an SGF file, importing non-root AB/AW/AE as setup branches.</P>
+                  </div>
+                );
+              })()}
+            </div>
           </div>
         </div>
       )}
