@@ -8,7 +8,7 @@ Live app: **[josekisage.github.io/Joseki-Sage](https://josekisage.github.io/Jose
 
 ## Overview
 
-Joseki Sage lets you build a personal joseki library, study sequences in an interactive editor, and test your recall in a fully-featured practice mode. It runs entirely in the browser as a single HTML file — no server, no account, no installation required.
+Joseki Sage lets you build a personal joseki library, study sequences in an interactive editor, and test your recall in a fully-featured practice mode. It runs entirely in the browser as a single HTML file.
 
 ---
 
