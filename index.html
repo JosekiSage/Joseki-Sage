@@ -3125,7 +3125,7 @@ function App(){
                 </div>
                 {/* Preview panel */}
                 <div style={{flex:window.innerWidth<768?"1":"0 0 220px",display:"flex",flexDirection:"column",
-                  padding:"14px",gap:"0.65rem",overflow:"hidden"}}>
+                  padding:"14px",gap:"0.65rem",overflow:window.innerWidth<768?"auto":"hidden"}}>
                   <div style={{fontWeight:600,fontSize:"0.82rem",color:"var(--color-text-primary)",flexShrink:0}}>
                     {pLabel}
                   </div>
@@ -3163,7 +3163,7 @@ function App(){
                     </div>
                   )}
                   {/* Start practice from selected node button */}
-                  <div style={{marginTop:"auto",display:"flex",flexDirection:"column",gap:"0.4rem"}}>
+                  <div style={{marginTop:"0.5rem",display:"flex",flexDirection:"column",gap:"0.4rem",flexShrink:0}}>
                     <button className="btn btnp btnsm" onClick={function(){
                       // Derive player color from nextMoveColor at selected node
                       var selNode=nodeAtPath(qRoot,qTreeModalPath);
