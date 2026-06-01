@@ -2682,16 +2682,19 @@ function App(){
                       Object.keys(qStones).forEach(function(k){
                         var p=k.split(","); addPt(Number(p[0]),Number(p[1]));
                       });
-                      // Immediate children: only include in bbox when
-                      // showAnnotations is on - hidden moves shouldn't expand the view
-                      if(qNode&&qNode.children&&qSettings.showAnnotations){
+                      // Always include immediate children in bbox so the player
+                      // can reach valid moves regardless of showAnnotations setting.
+                      // Letter annotations only included when showAnnotations is on
+                      // (they reveal where to play so should stay hidden otherwise).
+                      if(qNode&&qNode.children){
                         qNode.children.forEach(function(ch){
                           if(ch.move&&!ch.move.pass) addPt(ch.move.r,ch.move.c);
                         });
-                        // Also include manually placed letter annotations (custom joseki)
-                        (qNode.annotations||[]).forEach(function(a){
-                          if(a.type==="letter") addPt(a.r,a.c);
-                        });
+                        if(qSettings.showAnnotations){
+                          (qNode.annotations||[]).forEach(function(a){
+                            if(a.type==="letter") addPt(a.r,a.c);
+                          });
+                        }
                       }
                       // Wrong continuations / hints
                       qWrongContinuations.forEach(function(m){
