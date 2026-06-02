@@ -2268,7 +2268,7 @@ function App(){
     .sc{background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-lg);padding:0.72rem 0.85rem;margin-bottom:0.42rem;display:flex;gap:0.8rem;align-items:flex-start;}
     .sc.dis{opacity:0.52;}
     .si{flex:1;min-width:0;}
-    .sn{font-size:0.88rem;font-weight:600;margin-bottom:0.15rem;}
+    .sn{font-size:0.88rem;font-weight:600;margin-bottom:0.15rem;word-break:break-word;}
     .sm{font-size:0.68rem;color:var(--color-text-tertiary);font-family:monospace;margin-bottom:0.28rem;}
     .sno{font-size:0.76rem;color:var(--color-text-secondary);font-style:italic;margin-bottom:0.42rem;line-height:1.5;}
     .bshadow{border-radius:7px;overflow:hidden;box-shadow:0 2px 20px rgba(28,24,20,0.18);display:inline-block;}
@@ -2354,10 +2354,10 @@ function App(){
     });
     return (
       <div key={folder.id} style={{marginBottom:"0.4rem",marginLeft:depth*16}}>
-        <div className="frow" style={{flexDirection:"column",alignItems:"stretch",gap:"0.4rem"}}
+        <div className="frow" style={{flexDirection:window.innerWidth<768?"column":"row",alignItems:window.innerWidth<768?"stretch":"center",gap:window.innerWidth<768?"0.4rem":undefined}}
           onClick={function(){ toggleCollapse(folder.id); }}>
-          {/* Line 1: collapse toggle + name + item count */}
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
+          {/* Line 1 (mobile) / main row (desktop): collapse toggle + name + item count */}
+          <div style={{display:"flex",alignItems:"center",gap:6,flex:window.innerWidth>=768?1:undefined}}>
             <span style={{fontSize:"0.85rem",flexShrink:0}}>{folder.collapsed?"[+]":"[-]"}</span>
             {renamingFolderId===folder.id?(
               <input autoFocus className="inp" style={{fontSize:"0.85rem",padding:"0 4px",height:22,flex:1,minWidth:60}}
@@ -2382,12 +2382,12 @@ function App(){
             )}
             <span style={{fontSize:"0.68rem",color:"var(--color-text-tertiary)",fontFamily:"monospace",flexShrink:0}}>{fEntries.length+subFolders.length} items</span>
           </div>
-          {/* Line 2: action buttons */}
+          {/* Line 2 (mobile) / continued row (desktop): action buttons */}
           <div style={{display:"flex",alignItems:"center",gap:6}} onClick={function(e){ e.stopPropagation(); }}>
           <button className="btn btnxs" onClick={function(e){ e.stopPropagation();
             setFolderEnabled(folder.id,!allOn);
             subFolders.forEach(function(sf){ setFolderEnabled(sf.id,!allOn); });
-          }} style={allOn?{background:"#4A8870",color:"#fff",borderColor:"#2E6058"}:{}}>
+          }} style={allOn?{background:"#4A8870",color:"#fff",borderColor:"#2E6058",marginLeft:window.innerWidth>=768?"auto":undefined}:{marginLeft:window.innerWidth>=768?"auto":undefined}}>
             {allOn?"All On":"All Off"}
           </button>
           {folder.id!=="f-default"&&folder.id!=="f-custom"&&(
