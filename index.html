@@ -2354,34 +2354,40 @@ function App(){
     });
     return (
       <div key={folder.id} style={{marginBottom:"0.4rem",marginLeft:depth*16}}>
-        <div className="frow" onClick={function(){ toggleCollapse(folder.id); }}>
-          <span style={{fontSize:"0.85rem"}}>{folder.collapsed?"[+]":"[-]"}</span>
-          {renamingFolderId===folder.id?(
-            <input autoFocus className="inp" style={{fontSize:"0.85rem",padding:"0 4px",height:22,flex:1,minWidth:60,maxWidth:180}}
-              value={renameFolderVal}
-              onChange={function(e){ setRenameFolderVal(e.target.value); }}
-              onKeyDown={function(e){
-                if(e.key==="Enter"&&renameFolderVal.trim()){
-                  setFolders(function(prev){ return prev.map(function(f){ return f.id===folder.id?{...f,name:renameFolderVal.trim()}:f; }); });
+        <div className="frow" style={{flexDirection:"column",alignItems:"stretch",gap:"0.4rem"}}
+          onClick={function(){ toggleCollapse(folder.id); }}>
+          {/* Line 1: collapse toggle + name + item count */}
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:"0.85rem",flexShrink:0}}>{folder.collapsed?"[+]":"[-]"}</span>
+            {renamingFolderId===folder.id?(
+              <input autoFocus className="inp" style={{fontSize:"0.85rem",padding:"0 4px",height:22,flex:1,minWidth:60}}
+                value={renameFolderVal}
+                onChange={function(e){ setRenameFolderVal(e.target.value); }}
+                onKeyDown={function(e){
+                  if(e.key==="Enter"&&renameFolderVal.trim()){
+                    setFolders(function(prev){ return prev.map(function(f){ return f.id===folder.id?{...f,name:renameFolderVal.trim()}:f; }); });
+                    setRenamingFolderId(null);
+                  } else if(e.key==="Escape"){ setRenamingFolderId(null); }
+                  e.stopPropagation();
+                }}
+                onBlur={function(){
+                  if(renameFolderVal.trim()){
+                    setFolders(function(prev){ return prev.map(function(f){ return f.id===folder.id?{...f,name:renameFolderVal.trim()}:f; }); });
+                  }
                   setRenamingFolderId(null);
-                } else if(e.key==="Escape"){ setRenamingFolderId(null); }
-                e.stopPropagation();
-              }}
-              onBlur={function(){
-                if(renameFolderVal.trim()){
-                  setFolders(function(prev){ return prev.map(function(f){ return f.id===folder.id?{...f,name:renameFolderVal.trim()}:f; }); });
-                }
-                setRenamingFolderId(null);
-              }}
-              onClick={function(e){ e.stopPropagation(); }}/>
-          ):(
-            <span className="fname">{folder.name}</span>
-          )}
-          <span style={{fontSize:"0.68rem",color:"var(--color-text-tertiary)",fontFamily:"monospace"}}>{fEntries.length+subFolders.length} items</span>
+                }}
+                onClick={function(e){ e.stopPropagation(); }}/>
+            ):(
+              <span className="fname" style={{flex:1}}>{folder.name}</span>
+            )}
+            <span style={{fontSize:"0.68rem",color:"var(--color-text-tertiary)",fontFamily:"monospace",flexShrink:0}}>{fEntries.length+subFolders.length} items</span>
+          </div>
+          {/* Line 2: action buttons */}
+          <div style={{display:"flex",alignItems:"center",gap:6}} onClick={function(e){ e.stopPropagation(); }}>
           <button className="btn btnxs" onClick={function(e){ e.stopPropagation();
             setFolderEnabled(folder.id,!allOn);
             subFolders.forEach(function(sf){ setFolderEnabled(sf.id,!allOn); });
-          }} style={allOn?{background:"#4A8870",color:"#fff",borderColor:"#2E6058",marginLeft:"auto"}:{marginLeft:"auto"}}>
+          }} style={allOn?{background:"#4A8870",color:"#fff",borderColor:"#2E6058"}:{}}>
             {allOn?"All On":"All Off"}
           </button>
           {folder.id!=="f-default"&&folder.id!=="f-custom"&&(
@@ -2441,6 +2447,7 @@ function App(){
           {folder.id!=="f-default"&&folder.id!=="f-custom"&&movingFolderId!==folder.id&&(
             <button className="btn btnxs btnd" onClick={function(e){ e.stopPropagation(); setDeletingFolderId(folder.id); }}>X</button>
           )}
+          </div>{/* end buttons line */}
         </div>
         {!folder.collapsed&&(
           <div style={{paddingLeft:"0.75rem"}}>
