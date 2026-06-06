@@ -4,13 +4,13 @@ A browser-based Go joseki training application.
 
 Live app: [**josekisage.github.io/Joseki-Sage**](https://josekisage.github.io/Joseki-Sage/)
 
-\---
+---
 
 ## Overview
 
-Joseki Sage lets you build a personal joseki library, study sequences in an interactive editor, and test your recall in a fully-featured practice mode. It runs entirely in the browser as a single HTML file — no server, no account, no installation required. Your custom library can be synced across devices using Google Drive.
+Joseki Sage lets you build a personal joseki library, study sequences in an interactive editor, and test your recall in a fully-featured practice mode. It runs entirely in the browser as a single HTML file. Your custom library can be synced across devices using Google Drive.
 
-\---
+---
 
 ## Features
 
@@ -47,24 +47,30 @@ Joseki Sage lets you build a personal joseki library, study sequences in an inte
 * Settings panel with toggles for hints, annotations, scoring, and transforms
 * Session statistics: score, accuracy, streak
 
-\---
+---
 
-## Installation \& Usage
+## Installation & Usage
 
 ### Online (GitHub Pages)
 
 Visit [josekisage.github.io/Joseki-Sage](https://josekisage.github.io/Joseki-Sage/) in any modern browser. No installation required.
 
-### Progressive Web App (PWA)
+### Offline use
 
-Joseki Sage can be installed as a PWA for a native app-like experience:
+Joseki Sage works offline on all platforms after your first visit. The app uses a service worker to cache itself in your browser automatically — no configuration needed. Once cached, it loads and runs fully with no internet connection. Your library data is stored locally in your browser and is always available offline.
+
+The only features that require an internet connection are Google Drive sync and the initial fetch of the Default Library.
+
+### Installing as a PWA
+
+Joseki Sage can be installed as a Progressive Web App for a native app-like experience with its own icon and window. Installing is optional — the app works fully in the browser with or without installation, including offline.
 
 **Android (Chrome or Firefox):**
 
 1. Open the app in your browser
 2. Tap the browser menu (⋮)
 3. Select "Add to Home Screen" or "Install app"
-4. Confirm — the app will appear on your home screen
+4. Confirm: the app will appear on your home screen
 
 **iOS (Safari):**
 
@@ -77,15 +83,9 @@ Joseki Sage can be installed as a PWA for a native app-like experience:
 
 1. Open the app
 2. Click the install icon (⊕) in the address bar, or use the browser menu
-3. Click "Install"
+3. Click "Install": the app opens in its own window and appears in your taskbar or dock
 
-Once installed, Joseki Sage works offline after the first visit.
-
-### Offline (standalone file)
-
-The app can be downloaded as a fully self-contained file directly from this repository. Download `index.html`, save it anywhere on your device, and open it in any browser — no internet connection required. Note that Google Drive sync is not available in the offline file.
-
-\---
+---
 
 ## Data Management
 
@@ -103,17 +103,17 @@ Importing a library replaces the existing one entirely. Keep exported backups of
 
 Joseki Sage supports automatic cross-device sync via Google Drive. Once connected, your custom library is saved to Drive automatically after any change and fetched silently on startup.
 
-**To connect:** Tap the **Drive** button in the library top bar → **Connect Google Drive** → sign in and grant permission. The app can only access a single file it creates (`joseki-custom-library.json`) — it cannot see any other files in your Drive.
+**To connect:** Tap the **Drive** button in the library top bar → **Connect Google Drive** → sign in and grant permission. The app can only access a single file it creates (`joseki-custom-library.json`). It cannot see any other files in your Drive.
 
 **What is synced:** Your Custom Library only. The Default Library is shared content and is not synced. The `drive.file` OAuth scope is used, which is the narrowest permission available.
 
-**Token expiry:** Google sessions expire after \~1 hour. The Drive button shows an error indicator when this happens. You may tap it and select Reconnect.
+**Token expiry:** Google sessions expire after ~1 hour. The Drive button shows an error indicator when this happens, tap it and select Reconnect.
 
-\---
+---
 
 ## Architecture
 
-Joseki Sage is a single-file React application compiled at runtime via Babel standalone. There is no build step — the HTML file is the complete application.
+Joseki Sage is a single-file React application compiled at runtime via Babel standalone. There is no build step as the HTML file is the complete application.
 
 * **React 18** with Babel standalone (JSX in the browser)
 * **Web Audio API** for stone placement sounds (zero latency, no audio files)
@@ -121,9 +121,9 @@ Joseki Sage is a single-file React application compiled at runtime via Babel sta
 * **Google Drive API** with OAuth 2.0 (`drive.file` scope) for optional cross-device sync
 * **Service worker** for PWA offline support
 
-\---
+---
 
-## Credits \& Acknowledgements
+## Credits & Acknowledgements
 
 Inspired by [Joseki.cat](https://joseki.cat), an excellent joseki trainer without which this app would not exist.
 
@@ -131,7 +131,7 @@ Default library data sourced from the [OGS Joseki Explorer](https://online-go.co
 
 Stone sounds from [Sabaki](https://github.com/SabakiHQ/Sabaki) by Yichuan Shen, used under the MIT license.
 
-\---
+---
 
 ## License
 
@@ -139,11 +139,10 @@ Stone sounds from [Sabaki](https://github.com/SabakiHQ/Sabaki) by Yichuan Shen, 
 
 Free to use, share, and adapt for non-commercial purposes with attribution.
 
-\---
+---
 
 ## Feedback
 
 Bug reports and suggestions: [josekisage@gmail.com](mailto:josekisage@gmail.com)
 
 If you find Joseki Sage useful: [ko-fi.com/josekisage](https://ko-fi.com/josekisage)
-
