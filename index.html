@@ -215,6 +215,107 @@ function applySetupDelta(stones,node){
   (node.setupRemoved||[]).forEach(function(s){ delete stones[sk(s.r,s.c)]; });
   (node.setupAdded||[]).forEach(function(s){ stones[sk(s.r,s.c)]={color:s.color,moveNum:null}; });
 }
+
+// ─── Google Drive sync ───────────────────────────────────────────────────────
+var DRIVE_CLIENT_ID="988654207729-lum59n1qn66tl2jgom6lss20itfk6hr9.apps.googleusercontent.com";
+var DRIVE_FILE_NAME="joseki-custom-library.json";
+
+function driveFormatSync(iso){
+  if(!iso) return "Never";
+  var d=new Date(iso); var now=new Date();
+  var diff=Math.floor((now-d)/1000);
+  if(diff<60) return "Just now";
+  if(diff<3600) return Math.floor(diff/60)+"m ago";
+  if(diff<86400) return Math.floor(diff/3600)+"h ago";
+  return d.toLocaleDateString();
+}
+function driveFindFile(token){
+  return fetch(
+    "https://www.googleapis.com/drive/v3/files?q=name%3D%27joseki-custom-library.json%27+and+trashed%3Dfalse&spaces=drive&fields=files(id,modifiedTime)",
+    {headers:{Authorization:"Bearer "+token}}
+  ).then(function(r){
+    if(r.status===401) return {_driveAuthError:true};
+    if(!r.ok) return null;
+    return r.json();
+  }).then(function(d){
+    if(d&&d._driveAuthError) return d;
+    return (d&&d.files&&d.files.length>0)?d.files[0]:null;
+  }).catch(function(){ return null; });
+}
+
+function driveReadFile(token,fileId){
+  return fetch(
+    "https://www.googleapis.com/drive/v3/files/"+fileId+"?alt=media",
+    {headers:{Authorization:"Bearer "+token}}
+  ).then(function(r){
+    if(r.status===401) return {_driveAuthError:true};
+    if(!r.ok) return null;
+    return r.json();
+  }).catch(function(){ return null; });
+}
+function driveWriteFile(token,fileId,data){
+  var body=JSON.stringify(data);
+  if(!fileId){
+    var meta=JSON.stringify({name:DRIVE_FILE_NAME,mimeType:"application/json"});
+    var boundary="joseki_bnd_x7k";
+    var CRLF="\r\n";
+    var mp="--"+boundary+CRLF+"Content-Type: application/json"+CRLF+CRLF+meta+
+           CRLF+"--"+boundary+CRLF+"Content-Type: application/json"+CRLF+CRLF+body+
+           CRLF+"--"+boundary+"--";
+    return fetch(
+      "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+      {method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"multipart/related; boundary="+boundary},body:mp}
+    ).then(function(r){
+      if(r.status===401) return {_driveAuthError:true};
+      if(r.status===403) return {_driveQuotaError:true};
+      if(!r.ok) return null; return r.json();
+    }).then(function(d){ return d?d.id||null:null; })
+    .catch(function(){ return null; });
+  } else {
+    return fetch(
+      "https://www.googleapis.com/upload/drive/v3/files/"+fileId+"?uploadType=media",
+      {method:"PATCH",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:body}
+    ).then(function(r){
+      if(r.status===401) return {_driveAuthError:true};
+      return r.ok?fileId:null;
+    }).catch(function(){ return null; });
+  }
+}
+function isDefaultEntry(entry,folders){
+  var folderId=entry.folderId;
+  while(folderId){
+    if(folderId==="f-default") return true;
+    var folder=null;
+    for(var i=0;i<folders.length;i++){ if(folders[i].id===folderId){ folder=folders[i]; break; } }
+    folderId=folder?folder.parentId:null;
+  }
+  return false;
+}
+function normalizeEntry(e){
+  // Return a stable sorted-key representation of an entry for comparison
+  var keys=Object.keys(e).filter(function(k){ return k!=="id"; }).sort();
+  var out={id:e.id};
+  keys.forEach(function(k){ out[k]=e[k]; });
+  return out;
+}
+function normalizeLibrary(entries,folders){
+  // Sort entries and folders by id for stable comparison
+  var sortedEntries=entries.slice().sort(function(a,b){ return (a.id||"").localeCompare(b.id||""); })
+    .map(normalizeEntry);
+  var sortedFolders=folders.filter(function(f){ return f.id!=="f-default"&&f.id!=="f-custom"; })
+    .slice().sort(function(a,b){ return (a.id||"").localeCompare(b.id||""); });
+  return JSON.stringify({entries:sortedEntries,folders:sortedFolders});
+}
+function librariesMatch(localEntries,localFolders,driveData){
+  if(!driveData) return false;
+  var localHash=normalizeLibrary(localEntries,localFolders);
+  var driveEntries=driveData.entries||[];
+  var driveFolders=driveData.folders||[];
+  var driveHash=normalizeLibrary(driveEntries,driveFolders);
+  return localHash===driveHash;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // --- Practice mode helpers ---
 
 // Return the color of the next move reachable from this node,
@@ -474,7 +575,7 @@ function parseSgf(txt){
 }
 
 // Persistence
-function saveLib(data){ try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(data)); }catch(e){} }
+function saveLib(data){ try{ var d=Object.assign({},data,{lastModified:new Date().toISOString()}); localStorage.setItem(STORAGE_KEY,JSON.stringify(d)); }catch(e){} }
 function loadLib(){ try{ var r=localStorage.getItem(STORAGE_KEY); if(r) return JSON.parse(r); }catch(e){} return null; }
 function parseImport(txt){
   var obj=JSON.parse(txt);
@@ -950,6 +1051,13 @@ function App(){
   const[tab,setTab]=useState(TABS.library);
   const[searchQuery,setSearchQuery]=useState("");
   const[showHelp,setShowHelp]=useState(false);
+  const[driveToken,setDriveToken]=useState(function(){ return localStorage.getItem("joseki-drive-token")||null; });
+  const[driveFileId,setDriveFileId]=useState(function(){ return localStorage.getItem("joseki-drive-file-id")||null; });
+  const[driveStatus,setDriveStatus]=useState("idle");
+  const[driveLastSync,setDriveLastSync]=useState(function(){ return localStorage.getItem("joseki-drive-last-sync")||null; });
+  const[driveConflict,setDriveConflict]=useState(null);
+  const[driveError,setDriveError]=useState(null);
+  const[showDriveMenu,setShowDriveMenu]=useState(false);
 
   useEffect(function(){
     var saved=loadLib();
@@ -1080,6 +1188,9 @@ function App(){
           return kept.concat(impEntries);
         });
 
+        // Update lastModified so Drive conflict detection knows this device has fresh data
+        var ts=new Date().toISOString();
+        try{ var lsData=JSON.parse(localStorage.getItem("joseki-lab-v8")||"{}"); lsData.lastModified=ts; localStorage.setItem("joseki-lab-v8",JSON.stringify(lsData)); }catch(ex){}
         setImportErr(""); setShowImportMenu(false);
       }catch(err){ setImportErr("Import failed: "+err.message); }
     };
@@ -1758,6 +1869,200 @@ function App(){
   const[qSession,setQSession]=useState({points:0,streak:0,totalC:0,totalW:0});
   const[qPlayerColor,setQPlayerColor]=useState("B");
 
+  function driveHandleAuthExpiry(){
+    // Token expired — clear stored token and prompt user to reconnect
+    localStorage.removeItem("joseki-drive-token");
+    setDriveToken(null);
+    setDriveStatus("error");
+    setDriveError("Session expired — click to reconnect");
+  }
+
+  function driveLoadGsiThenConnect(){
+    if(window.google&&window.google.accounts){ driveConnect(); return; }
+    var s=document.createElement("script");
+    s.src="https://accounts.google.com/gsi/client";
+    s.onload=function(){ driveConnect(); };
+    s.onerror=function(){ setDriveError("Failed to load Google Sign-In."); };
+    document.head.appendChild(s);
+  }
+
+  function driveConnect(){
+    if(!window.google||!window.google.accounts){ setDriveError("Google Sign-In not loaded yet."); return; }
+    var client=window.google.accounts.oauth2.initTokenClient({
+      client_id:DRIVE_CLIENT_ID,
+      scope:"https://www.googleapis.com/auth/drive.file",
+      prompt:"select_account",
+      callback:function(resp){
+        if(resp.error||!resp.access_token){ setDriveError("Authorization failed."); return; }
+        localStorage.setItem("joseki-drive-token",resp.access_token);
+        setDriveToken(resp.access_token);
+        setDriveError(null);
+        driveLoadOnConnect(resp.access_token);
+      }
+    });
+    client.requestAccessToken();
+  }
+
+  function driveDisconnect(){
+    if(driveToken&&window.google&&window.google.accounts) window.google.accounts.oauth2.revoke(driveToken,function(){});
+    localStorage.removeItem("joseki-drive-token");
+    localStorage.removeItem("joseki-drive-file-id");
+    setDriveToken(null); setDriveFileId(null); setDriveLastSync(null);
+    setDriveStatus("idle"); setDriveError(null); setShowDriveMenu(false);
+  }
+
+  function getCustomEntries(){ return entries.filter(function(e){ return !isDefaultEntry(e,folders); }); }
+  function getCustomFolders(){ return folders.filter(function(f){ return f.id!=="f-default"&&f.id!=="f-custom"; }); }
+  function hasLocalCustomData(){ return getCustomEntries().length>0; }
+
+  function driveHandleConflict(token,file,driveData,isStartup){
+    var driveTime=new Date(file.modifiedTime);
+    var localRaw=localStorage.getItem("joseki-lab-v8");
+    var localParsed=localRaw?JSON.parse(localRaw):null;
+    var localTime=localParsed&&localParsed.lastModified?new Date(localParsed.lastModified):new Date(0);
+
+    function applyAndSync(){
+      driveApplyData(driveData);
+      var ts=new Date().toISOString();
+      localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
+      try{ var lsD=JSON.parse(localStorage.getItem("joseki-lab-v8")||"{}"); lsD.lastModified=ts; localStorage.setItem("joseki-lab-v8",JSON.stringify(lsD)); }catch(ex){}
+      setDriveStatus("idle");
+    }
+
+    function updateSyncTimeOnly(){
+      var ts=new Date().toISOString();
+      localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
+      setDriveStatus("idle");
+    }
+
+    // No local custom data — load from Drive silently
+    if(!hasLocalCustomData()){
+      applyAndSync(); return;
+    }
+    // No Drive data — upload local
+    if(!driveData||!(driveData.entries&&driveData.entries.length>0)){
+      driveSaveNow(token,file.id); return;
+    }
+
+    // Content comparison — if libraries are identical, no conflict regardless of timestamps
+    var localCustomEntries=getCustomEntries();
+    var localCustomFolders=getCustomFolders();
+    if(librariesMatch(localCustomEntries,localCustomFolders,driveData)){
+      // Content is identical — just update sync timestamp, no action needed
+      updateSyncTimeOnly(); return;
+    }
+
+    // Content genuinely differs — show conflict dialogue regardless of startup or manual connect
+    setDriveConflict({driveData:driveData,driveTime:driveTime,localTime:localTime});
+    setDriveStatus("idle");
+  }
+
+  function driveLoadOnConnect(token){
+    setDriveStatus("loading");
+    driveFindFile(token).then(function(file){
+      if(!file){
+        // No Drive file yet — upload local custom library
+        var localData={entries:getCustomEntries(),folders:getCustomFolders(),lastModified:new Date().toISOString()};
+        return driveWriteFile(token,null,localData).then(function(newId){
+          if(newId){ localStorage.setItem("joseki-drive-file-id",newId); setDriveFileId(newId); var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts); }
+          setDriveStatus("idle");
+        });
+      } else {
+        localStorage.setItem("joseki-drive-file-id",file.id); setDriveFileId(file.id);
+        return driveReadFile(token,file.id).then(function(driveData){
+          driveHandleConflict(token,file,driveData,false);
+        });
+      }
+    }).catch(function(e){ setDriveStatus("error"); setDriveError("Drive error: "+(e.message||e)); });
+  }
+
+  function driveSaveNow(token,fileId){
+    if(!token||!fileId) return;
+    setDriveStatus("syncing");
+    var data={entries:getCustomEntries(),folders:getCustomFolders(),lastModified:new Date().toISOString()};
+    driveWriteFile(token,fileId,data).then(function(result){
+      if(result&&result._driveAuthError){ driveHandleAuthExpiry(); return; }
+      if(result&&result._driveQuotaError){ setDriveStatus("error"); setDriveError("Google Drive storage full — free up space and try again."); return; }
+      if(result){ var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts); setDriveStatus("idle"); }
+      else { setDriveStatus("error"); setDriveError("Failed to save to Drive."); }
+    }).catch(function(e){ setDriveStatus("error"); setDriveError("Drive error: "+(e.message||e)); });
+  }
+
+  function driveApplyData(data){
+    if(!data) return;
+    driveLoadingRef.current=true;
+    setEntries(function(prev){
+      var defaults=prev.filter(function(e){ return isDefaultEntry(e,folders); });
+      var incoming=data.entries||[];
+      return defaults.concat(incoming);
+    });
+    setFolders(function(prev){
+      var system=prev.filter(function(f){ return f.id==="f-default"||f.id==="f-custom"; });
+      var incoming=(data.folders||[]).filter(function(f){ return f.id!=="f-default"&&f.id!=="f-custom"; });
+      return system.concat(incoming);
+    });
+    // Clear loading flag after React has processed state updates
+    setTimeout(function(){ driveLoadingRef.current=false; },100);
+  }
+
+  useEffect(function(){
+    if(!showDriveMenu) return;
+    function handler(){ setShowDriveMenu(false); }
+    document.addEventListener("click",handler);
+    return function(){ document.removeEventListener("click",handler); };
+  },[showDriveMenu]);
+
+  // On app startup, if a token is stored, sync from Drive in background
+  // Local library from localStorage is shown immediately; Drive data merges silently
+  var driveStartupRan=useRef(false);
+  useEffect(function(){
+    if(!loaded) return;
+    if(driveStartupRan.current) return;
+    driveStartupRan.current=true;
+    var token=localStorage.getItem("joseki-drive-token");
+    var fileId=localStorage.getItem("joseki-drive-file-id");
+    if(!token||!fileId) return;
+    // Show subtle syncing indicator but don't block the UI
+    setDriveStatus("syncing");
+    Promise.all([
+      driveFindFile(token),
+      driveReadFile(token,fileId)
+    ]).then(function(results){
+      var file=results[0]; var driveData=results[1];
+      if((driveData&&driveData._driveAuthError)||(file&&file._driveAuthError)){
+        driveHandleAuthExpiry(); return;
+      }
+      if(!file){
+        // File gone from Drive — clear stored file ID
+        localStorage.removeItem("joseki-drive-file-id");
+        setDriveFileId(null);
+        setDriveStatus("idle");
+        return;
+      }
+      if(!driveData){
+        setDriveStatus("idle"); return;
+      }
+      // Pass isStartup=true — silently use newer version, no conflict dialogue
+      driveHandleConflict(token,file,driveData,true);
+    }).catch(function(){
+      // Network error — just show idle, don't clear token
+      setDriveStatus("idle");
+    });
+  },[loaded]);
+
+  var driveLoadingRef=useRef(false); // suppress auto-save during Drive-initiated loads
+  var driveTokenRef=useRef(driveToken);
+  var driveFileIdRef=useRef(driveFileId);
+  useEffect(function(){ driveTokenRef.current=driveToken; },[driveToken]);
+  useEffect(function(){ driveFileIdRef.current=driveFileId; },[driveFileId]);
+  useEffect(function(){
+    var t=driveTokenRef.current; var fid=driveFileIdRef.current;
+    if(!t||!fid) return;
+    if(driveLoadingRef.current) return; // skip auto-save during Drive-initiated loads
+    var timer=setTimeout(function(){ driveSaveNow(t,fid); },2000);
+    return function(){ clearTimeout(timer); };
+  },[entries,folders]);
+
   var enabledEntries=entries.filter(function(e){ return e.enabled!==false; });
   var practicePool=qIsSingleEntry&&qEntry?[qEntry]:enabledEntries;
 
@@ -2215,6 +2520,12 @@ function App(){
     return folders.filter(function(f){ return f.parentId===folderId; })
       .some(function(sf){ return folderHasVisible(sf.id); });
   }
+  function countJosekiInFolder(folderId){
+    var direct=visibleEntries.filter(function(e){ return e.folderId===folderId; }).length;
+    var sub=folders.filter(function(f){ return f.parentId===folderId; })
+      .reduce(function(acc,sf){ return acc+countJosekiInFolder(sf.id); },0);
+    return direct+sub;
+  }
   var folderEntries=function(id){ return visibleEntries.filter(function(e){ return e.folderId===id; })
     .sort(function(a,b){ return a.name.localeCompare(b.name); }); };
   var unfoldered=visibleEntries.filter(function(e){ return !e.folderId; });
@@ -2380,7 +2691,7 @@ function App(){
             ):(
               <span className="fname" style={{flex:1}}>{folder.name}</span>
             )}
-            <span style={{fontSize:"0.68rem",color:"var(--color-text-tertiary)",fontFamily:"monospace",flexShrink:0}}>{fEntries.length+subFolders.length} items</span>
+            <span style={{fontSize:"0.68rem",color:"var(--color-text-tertiary)",fontFamily:"monospace",flexShrink:0}}>{countJosekiInFolder(folder.id)} items</span>
           </div>
           {/* Line 2 (mobile) / continued row (desktop): action buttons */}
           <div style={{display:"flex",alignItems:"center",gap:6}} onClick={function(e){ e.stopPropagation(); }}>
@@ -2477,6 +2788,70 @@ function App(){
           <span>
             <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30",marginRight:4}} onClick={function(){ setTab(TABS.about); }}>About</button>
             <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30",marginRight:4}} onClick={function(){ setShowHelp(true); }}>Help</button>
+            <div style={{position:"relative",display:"inline-block",marginRight:4}} onClick={function(e){ e.stopPropagation(); }}>
+              <button className="btn btnxs"
+                onClick={function(){ setShowDriveMenu(function(v){ return !v; }); }}
+                style={{color:driveToken?(driveStatus==="error"?"#C87070":"#6BAA8E"):"#C8BCA8",
+                  borderColor:driveToken?(driveStatus==="error"?"#8B2020":"#4A8870"):"#5A4A30",
+                  display:"flex",alignItems:"center",gap:"4px"}}>
+                <svg width="11" height="9" viewBox="0 0 87.3 78" fill="currentColor">
+                  <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                  <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+                  <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+                  <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                  <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                  <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 27h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+                </svg>
+                <span>{driveStatus==="syncing"?"Drive…":driveStatus==="error"?"Drive!":"Drive"}</span>
+              </button>
+              {showDriveMenu&&(
+                <div style={{position:"absolute",right:0,top:"calc(100% + 4px)",background:"var(--color-background-primary)",
+                  border:"0.5px solid var(--color-border-secondary)",borderRadius:6,minWidth:210,zIndex:300,
+                  boxShadow:"0 4px 16px rgba(0,0,0,0.25)",padding:"0.5rem 0"}}>
+                  {!driveToken?(
+                    <div>
+                      <div style={{padding:"0.4rem 0.9rem 0.5rem",fontSize:"0.78rem",color:"var(--color-text-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)",marginBottom:"0.4rem",lineHeight:1.5}}>
+                        Sync your custom library with Google Drive
+                      </div>
+                      <div style={{padding:"0 0.75rem"}}>
+                        <button className="btn btnsm" style={{width:"100%",textAlign:"center"}}
+                          onClick={function(){ setShowDriveMenu(false); driveLoadGsiThenConnect(); }}>
+                          Connect Google Drive
+                        </button>
+                      </div>
+                      {driveError&&<div style={{padding:"0.4rem 0.9rem",fontSize:"0.72rem",color:"var(--color-text-danger)"}}>{driveError}</div>}
+                    </div>
+                  ):(
+                    <div>
+                      <div style={{padding:"0.4rem 0.9rem",fontSize:"0.72rem",
+                        color:driveStatus==="error"?"var(--color-text-danger)":"var(--color-text-tertiary)",
+                        borderBottom:"0.5px solid var(--color-border-tertiary)",marginBottom:"0.4rem"}}>
+                        {driveStatus==="syncing"?"Syncing…":driveStatus==="loading"?"Loading…":driveStatus==="error"?driveError:("Last synced: "+driveFormatSync(driveLastSync))}
+                      </div>
+                      <div style={{padding:"0 0.75rem",display:"flex",flexDirection:"column",gap:"0.3rem"}}>
+                        {driveStatus==="error"?(
+                          <button className="btn btnsm" style={{width:"100%",textAlign:"center"}}
+                            onClick={function(){ setShowDriveMenu(false); setDriveStatus("idle"); setDriveError(null); driveLoadGsiThenConnect(); }}>
+                            Reconnect
+                          </button>
+                        ):(
+                          <button className="btn btnsm" style={{width:"100%",textAlign:"center"}}
+                            onClick={function(){ setShowDriveMenu(false); driveSaveNow(driveToken,driveFileId); }}
+                            disabled={driveStatus==="syncing"||driveStatus==="loading"}>
+                            Sync now
+                          </button>
+                        )}
+                        <button className="btn btnsm" style={{width:"100%",textAlign:"center",color:"var(--color-text-danger)"}}
+                          onClick={function(){ driveDisconnect(); }}>
+                          Disconnect
+                        </button>
+
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <div style={{position:"relative",display:"inline-block"}} onClick={function(e){ e.stopPropagation(); }}>
               <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30"}}
                 onClick={function(){ setShowExportMenu(function(v){ return !v; }); setShowImportMenu(false); }}>Download</button>
@@ -2501,7 +2876,6 @@ function App(){
             </div>
             <input ref={importDefaultRef} type="file" accept=".json" style={{display:"none"}} onChange={function(e){ handleImportFile(e,"default"); }}/>
             <input ref={importCustomRef} type="file" accept=".json" style={{display:"none"}} onChange={function(e){ handleImportFile(e,"custom"); }}/>
-            <button className="btn btnp btnsm" onClick={function(){ openEditor(null); }}>+ New</button>
           </span>
         )}
 
@@ -2509,7 +2883,10 @@ function App(){
 
       {tab===TABS.library&&(
         <div className="con">
-          <p className="ptitle">Joseki Library</p>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.2rem"}}>
+            <p className="ptitle" style={{margin:0}}>Joseki Library</p>
+            <button className="btn btnp btnsm" onClick={function(){ openEditor(null); }}>+ New</button>
+          </div>
           <p className="psub">Toggle On/Off to include in quiz pool.</p>
           <div style={{marginBottom:"0.65rem",position:"relative"}}>
             <input className="inp" style={{marginBottom:0,paddingLeft:"2rem"}}
@@ -2527,6 +2904,11 @@ function App(){
                   fontSize:"1rem",lineHeight:1,padding:"0 2px"}}>×</button>
             )}
           </div>
+          {driveStatus==="loading"&&(
+            <div style={{padding:"0.8rem",textAlign:"center",fontSize:"0.82rem",color:"var(--color-text-tertiary)",fontStyle:"italic"}}>
+              Loading library from Google Drive…
+            </div>
+          )}
           {fetching&&(
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"2.5rem 1rem",gap:"1rem"}}>
               <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
@@ -3433,8 +3815,8 @@ function App(){
             </p>
             <p style={{fontSize:"0.88rem",lineHeight:1.7,color:"var(--color-text-secondary)",marginTop:"0.75rem"}}>
               The app runs entirely in your browser as a single HTML file with no server
-              required. Your library is stored locally in your browser and can be exported
-              and imported as JSON files.
+              required. Your custom library can be synced automatically across devices using
+              Google Drive, or backed up and transferred manually as JSON files.
             </p>
             <p style={{fontSize:"0.88rem",lineHeight:1.7,color:"var(--color-text-secondary)",marginTop:"0.75rem"}}>
               This app was vibe coded with AI due to my lacking the technical skills to create it myself
@@ -3448,10 +3830,29 @@ function App(){
           <div className="card" style={{marginBottom:"1.2rem"}}>
             <p className="sect">How to Use</p>
             <div style={{fontSize:"0.88rem",lineHeight:1.7,color:"var(--color-text-secondary)"}}>
-              <p style={{marginBottom:"0.6rem"}}><strong>Library</strong> - Browse, organise, enable or disable joseki for practice. Import the default library via the Download/Import menu in the top bar. Use the folder structure to keep josekis organised between Default and Custom libraries.</p>
+              <p style={{marginBottom:"0.6rem"}}><strong>Library</strong> - Browse and organize joseki, enable or disable them for practice. Import the default library via the Download menu in the top bar. Use folders to organize between Default and Custom libraries. Connect Google Drive via the Drive button to sync your custom library automatically across devices.</p>
               <p style={{marginBottom:"0.6rem"}}><strong>Practice</strong> - Select joseki in the library and tap Practice, or use the start button in the Practice tab. The app randomly assigns you to play the first or second move of each sequence. Correct continuations are scored; wrong moves reveal valid alternatives. Settings allow mirroring, color inversion, and toggling of hints and comments.</p>
               <p style={{marginBottom:"0.6rem"}}><strong>New / Editor</strong> - Create joseki from scratch or edit existing ones. Place stones, add setup stones, annotate continuations with letters or markers, and write position comments. Import and export individual joseki as SGF files.</p>
               <p><strong>Scoring</strong> - Points are awarded per correct move, multiplied by a streak bonus (up to 3x at 5 consecutive correct moves). Accuracy is tracked as a percentage across the session. Scoring can be disabled in practice settings.</p>
+            </div>
+          </div>
+
+          {/* Google Drive sync */}
+          <div className="card" style={{marginBottom:"1.2rem"}}>
+            <p className="sect">Google Drive Sync</p>
+            <div style={{fontSize:"0.88rem",lineHeight:1.7,color:"var(--color-text-secondary)"}}>
+              <p style={{marginBottom:"0.6rem"}}>
+                Tap the <strong>Drive</strong> button in the top bar of the library and select <strong>Connect Google Drive</strong> to sync your custom library automatically across all your devices and browsers. You will be asked to sign in to your Google account and grant permission to access a single file. The app cannot see any other files in your Drive.
+              </p>
+              <p style={{marginBottom:"0.6rem"}}>
+                Once connected, your library is saved to a file called <code>joseki-custom-library.json</code> in your Drive whenever you make changes, and fetched silently in the background when you open the app. The Default Library is not synced.
+              </p>
+              <p style={{marginBottom:"0.6rem"}}>
+                If both a Drive file and local data exist when you first connect, the app will ask which version to use. Google sign-in sessions expire after approximately one hour — if the Drive button shows an error indicator, tap it and select <strong>Reconnect</strong>.
+              </p>
+              <p>
+                Google Drive sync is not available in the offline standalone file, as it requires an internet connection for authentication.
+              </p>
             </div>
           </div>
 
@@ -3539,8 +3940,13 @@ function App(){
                     <P><B>Editing a joseki:</B> Tap a joseki name to open it, then tap Edit.</P>
                     <P><B>Deleting a joseki:</B> Open the joseki and tap Delete. This cannot be undone.</P>
                     <H2>Importing and Exporting</H2>
-                    <P>Use the <B>Download</B> and <B>Import</B> menus in the top bar to back up or restore your library. Files are named JS-Custom-Library.json or JS-Default-Library.json. A copy of the default library is available at the GitHub repository.</P>
-                    <P>Importing completely replaces the existing library — export a backup first. To transfer between devices, export on the source, transfer the file, and import on the target.</P>
+                    <P>Use the <B>Download</B> and <B>Import</B> buttons in the top bar to back up or restore your library. Files are named JS-Custom-Library.json or JS-Default-Library.json. A copy of the default library is available at the GitHub repository.</P>
+                    <P>Importing completely replaces the existing library — export a backup first. To transfer between devices without Google Drive, export on the source, transfer the file, and import on the target.</P>
+                    <H2>Google Drive Sync</H2>
+                    <P>Tap the <B>Drive</B> button in the top bar and select <B>Connect Google Drive</B> to sync your custom library automatically across all devices and browsers. Sign in and grant permission — the app can only access a single file it creates and cannot see anything else in your Drive.</P>
+                    <P>Once connected, your library saves to Drive automatically a few seconds after any change and is fetched silently on startup. If Drive has newer data it updates automatically; if both devices have data you will be asked which version to use.</P>
+                    <P>The Drive button shows the last sync time when connected, "Drive…" while syncing, and a red indicator on error. Tap it and select <B>Reconnect</B> if your session has expired (sessions last approximately one hour). Selecting <B>Disconnect</B> removes the connection from this device but does not delete your Drive data.</P>
+                    <P>Only the Custom Library is synced. The Default Library and enabled/disabled toggle states for Default joseki are stored locally only. Google Drive sync is not available in the offline standalone file.</P>
                   </div>
                 );
 
@@ -3610,6 +4016,39 @@ function App(){
                   </div>
                 );
               })()}
+            </div>
+          </div>
+        </div>
+      )}
+      {driveConflict&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
+          <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:10,width:"100%",maxWidth:400,padding:"1.4rem",boxShadow:"0 8px 32px rgba(0,0,0,0.35)"}}>
+            <p style={{fontWeight:600,fontSize:"0.95rem",color:"var(--color-text-primary)",marginBottom:"0.6rem"}}>Library conflict</p>
+            <p style={{fontSize:"0.82rem",color:"var(--color-text-secondary)",marginBottom:"1rem",lineHeight:1.6}}>
+              Your Google Drive has a saved library. Which version would you like to use?
+            </p>
+            <div style={{display:"flex",flexDirection:"column",gap:"0.5rem",marginBottom:"1.1rem"}}>
+              <div style={{background:"var(--color-background-secondary)",borderRadius:6,padding:"0.6rem 0.9rem",fontSize:"0.8rem",color:"var(--color-text-secondary)",display:"flex",justifyContent:"space-between"}}>
+                <strong style={{color:"var(--color-text-primary)"}}>Google Drive</strong>
+                <span style={{fontSize:"0.75rem"}}>{new Date(driveConflict.driveTime).toLocaleString()}</span>
+              </div>
+              <div style={{background:"var(--color-background-secondary)",borderRadius:6,padding:"0.6rem 0.9rem",fontSize:"0.8rem",color:"var(--color-text-secondary)",display:"flex",justifyContent:"space-between"}}>
+                <strong style={{color:"var(--color-text-primary)"}}>This device</strong>
+                <span style={{fontSize:"0.75rem"}}>{driveConflict.localTime>new Date(0)?new Date(driveConflict.localTime).toLocaleString():"No local data"}</span>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:"0.5rem",justifyContent:"flex-end"}}>
+              <button className="btn btnsm" onClick={function(){
+                setDriveConflict(null);
+                driveSaveNow(driveToken,driveFileId);
+              }}>Use this device</button>
+              <button className="btn btnsm" style={{background:"#4A8870",color:"#fff",borderColor:"#2E6058"}} onClick={function(){
+                driveApplyData(driveConflict.driveData);
+                setDriveConflict(null);
+                var ts=new Date().toISOString();
+                localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
+                try{ var lsD=JSON.parse(localStorage.getItem("joseki-lab-v8")||"{}"); lsD.lastModified=ts; localStorage.setItem("joseki-lab-v8",JSON.stringify(lsD)); }catch(ex){}
+              }}>Use Google Drive</button>
             </div>
           </div>
         </div>
