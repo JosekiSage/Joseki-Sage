@@ -2363,7 +2363,17 @@ function App(){
       return;
     }
 
-    if(qStatus==="done"){ restartQuiz(); return; }
+    if(qStatus==="done"){
+      // Tap board at end of sequence -> pick a random joseki from the pool
+      var pool=practicePool.filter(function(e){ return e.enabled!==false; });
+      if(pool.length>0){
+        var next=pool[Math.floor(Math.random()*pool.length)];
+        startQuiz(next);
+      } else {
+        restartQuiz();
+      }
+      return;
+    }
     if(!qRoot||qStatus!=="waiting") return;
 
     // If opponent move is pending, advance it on any tap
@@ -3106,7 +3116,7 @@ function App(){
               <p style={{fontSize:"0.71rem",color:"var(--color-text-tertiary)",marginBottom:"0.55rem"}}>
                 Playing as {qPlayerColor==="B"?"Black":"White"}
                 {qSettings.playerRole==="random"?" (randomly assigned)":qSettings.playerRole==="player1"?" (Player 1)":" (Player 2)"}
-                {qStatus==="done"?" -- tap board to replay":""}
+                {qStatus==="done"?" -- tap board for next":""}
                 
               </p>
 
