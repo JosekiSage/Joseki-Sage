@@ -3222,7 +3222,6 @@ function App(){
                 )}
               {(qStatus==="waiting"&&qIsPlayer)&&(
                   <button className="btn btnsm"
-                    disabled={!(qNode&&(qNode.children||[]).some(function(ch){ return ch.move&&ch.move.pass&&ch.move.color===qPlayerColor; }))}
                     onClick={function(){
                       handleQuizBoardClick(-1,-1);
                     }}>Tenuki</button>
