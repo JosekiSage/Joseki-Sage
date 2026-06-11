@@ -1123,6 +1123,10 @@ function App(){
   const[entries,setEntries]=useState([]);
   const[folders,setFolders]=useState([]);
   const[loaded,setLoaded]=useState(false);
+  // syncVersion increments on any change that should trigger Drive auto-save.
+  // Excludes: toggleCollapse, toggleEnabled, setFolderEnabled (saved on sync but must not trigger it).
+  const[syncVersion,setSyncVersion]=useState(0);
+  function bumpSync(){ setSyncVersion(function(v){ return v+1; }); }
   const[fetching,setFetching]=useState(false);
   const[tab,setTab]=useState(TABS.library);
   const[searchQuery,setSearchQuery]=useState("");
@@ -1267,7 +1271,7 @@ function App(){
         // Update lastModified so Drive conflict detection knows this device has fresh data
         var ts=new Date().toISOString();
         try{ var lsData=JSON.parse(localStorage.getItem("joseki-lab-v9")||"{}"); lsData.lastModified=ts; localStorage.setItem("joseki-lab-v9",JSON.stringify(lsData)); }catch(ex){}
-        setImportErr(""); setShowImportMenu(false);
+        bumpSync(); setImportErr(""); setShowImportMenu(false);
       }catch(err){ setImportErr("Import failed: "+err.message); }
     };
     reader.readAsText(f); e.target.value="";
@@ -1319,7 +1323,7 @@ function App(){
   function addFolder(){
     var name=newFolderName.trim(); if(!name) return;
     setFolders(function(prev){ return prev.concat({id:Date.now().toString(),name:name,collapsed:true,parentId:addFolderParentId||null}); });
-    setNewFolderName(""); setAddFolderParentId(null);
+    setNewFolderName(""); setAddFolderParentId(null); bumpSync();
   }
   function toggleCollapse(id){ setFolders(function(prev){ return prev.map(function(f){ return f.id===id?{...f,collapsed:!f.collapsed}:f; }); }); }
   function getAllDescendantFolderIds(folderId,allFolders,visited){
@@ -1339,10 +1343,11 @@ function App(){
   function deleteFolder(id){
     setFolders(function(prev){ return prev.filter(function(f){ return f.id!==id; }); });
     setEntries(function(prev){ return prev.map(function(e){ return e.folderId===id?{...e,folderId:null}:e; }); });
+    bumpSync();
   }
 
   function toggleEnabled(id){ setEntries(function(prev){ return prev.map(function(e){ return e.id===id?{...e,enabled:e.enabled===false?true:false}:e; }); }); }
-  function deleteEntry(id){ setEntries(function(prev){ return prev.filter(function(e){ return e.id!==id; }); }); }
+  function deleteEntry(id){ setEntries(function(prev){ return prev.filter(function(e){ return e.id!==id; }); }); bumpSync(); }
   function exportSgf(entry){ downloadBlob(treeToSgf(entry.root,entry.boardSize), entry.name.replace(/\s+/g,"_")+".sgf"); }
 
   // Board scaling: derive from viewport, not element width (avoids ResizeObserver init lag)
@@ -1908,6 +1913,7 @@ function App(){
     setEntries(function(prev){
       return editId?prev.map(function(e){ return e.id===editId?{...entry,enabled:e.enabled}:e; }):prev.concat(entry);
     });
+    bumpSync();
     if(!editId) setEditId(newId); // now tracking as existing entry
     setSaveFlash(true);
     setTimeout(function(){ setSaveFlash(false); },1500);
@@ -2131,22 +2137,16 @@ function App(){
   var driveFileIdRef=useRef(driveFileId);
   useEffect(function(){ driveTokenRef.current=driveToken; },[driveToken]);
   useEffect(function(){ driveFileIdRef.current=driveFileId; },[driveFileId]);
-  // foldersForSync strips collapsed so toggling collapse does not trigger auto-save
-  // entriesForSync strips enabled so toggling enabled does not trigger auto-save
-  // Both fields are still written to Drive on any sync that does fire
-  var foldersForSync=useMemo(function(){
-    return folders.map(function(f){ var out=Object.assign({},f); delete out.collapsed; return out; });
-  },[folders]);
-  var entriesForSync=useMemo(function(){
-    return entries.map(function(e){ var out=Object.assign({},e); delete out.enabled; return out; });
-  },[entries]);
+  // syncVersion drives auto-save; it is incremented only by mutations that should trigger sync.
+  // toggleCollapse, toggleEnabled, and setFolderEnabled do NOT call bumpSync.
   useEffect(function(){
+    if(syncVersion===0) return; // skip on initial mount
     var t=driveTokenRef.current; var fid=driveFileIdRef.current;
     if(!t||!fid) return;
     if(driveLoadingRef.current) return; // skip auto-save during Drive-initiated loads
     var timer=setTimeout(function(){ driveSaveNow(t,fid); },2000);
     return function(){ clearTimeout(timer); };
-  },[entriesForSync,foldersForSync]);
+  },[syncVersion]);
 
   var enabledEntries=entries.filter(function(e){ return e.enabled!==false; });
   var practicePool=qIsSingleEntry&&qEntry?[qEntry]:enabledEntries;
@@ -2772,13 +2772,14 @@ function App(){
                 onKeyDown={function(e){
                   if(e.key==="Enter"&&renameFolderVal.trim()){
                     setFolders(function(prev){ return prev.map(function(f){ return f.id===folder.id?{...f,name:renameFolderVal.trim()}:f; }); });
-                    setRenamingFolderId(null);
+                    bumpSync(); setRenamingFolderId(null);
                   } else if(e.key==="Escape"){ setRenamingFolderId(null); }
                   e.stopPropagation();
                 }}
                 onBlur={function(){
                   if(renameFolderVal.trim()){
                     setFolders(function(prev){ return prev.map(function(f){ return f.id===folder.id?{...f,name:renameFolderVal.trim()}:f; }); });
+                    bumpSync();
                   }
                   setRenamingFolderId(null);
                 }}
@@ -2808,7 +2809,7 @@ function App(){
                     setFolders(function(prev){
                       return prev.map(function(f){ return f.id===folder.id?{...f,parentId:newParent}:f; });
                     });
-                    setMovingFolderId(null);
+                    bumpSync(); setMovingFolderId(null);
                   }}>
                   {(function(){
                     // Build hierarchy excluding this folder and its descendants
