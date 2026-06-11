@@ -7,10 +7,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <meta name="apple-mobile-web-app-title" content="Joseki Sage"/>
-  <meta name="description" content="Joseki Sage — a free Go, Baduk, and Weiqi joseki trainer. Build a personal joseki library, study sequences in an interactive editor, and test your recall in practice mode."/>
+  <meta name="description" content="Joseki Sage — a free Go/Baduk/Weiqi joseki trainer. Build a personal joseki library, study sequences in an interactive editor, and test your recall in practice mode."/>
   <meta name="keywords" content="Go, Baduk, Weiqi, joseki, joseki trainer, joseki practice, joseki study, Go opening, Go patterns, stone patterns, Go game, Baduk trainer, Weiqi trainer"/>
   <meta property="og:title" content="Joseki Sage — Go / Baduk / Weiqi Joseki Trainer"/>
-  <meta property="og:description" content="A free browser-based joseki trainer for Go, Baduk, and Weiqi. Study and practice joseki sequences with an interactive editor and quiz mode."/>
+  <meta property="og:description" content="A free browser-based joseki trainer for Go/Baduk/Weiqi. Study and practice joseki sequences with an interactive editor and quiz mode."/>
   <meta property="og:url" content="https://josekisage.com"/>
   <meta property="og:type" content="website"/>
   <script type="application/ld+json">
@@ -93,7 +93,24 @@ html, body { height: 100%; background: #F8F4EE; }
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="root"><div style="min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#F8F4EE;font-family:serif;padding:2rem;text-align:center;">
+  <style>@media(prefers-color-scheme:dark){#root-static{background:#201A12!important;color:#D8C8A8!important}#root-static p,#root-static h2{color:#A89878!important}}</style>
+  <div id="root-static" style="background:#F8F4EE;">
+    <div style="font-size:1.5rem;font-weight:600;color:#1C1814;margin-bottom:0.5rem;">Joseki Sage</div>
+    <div style="font-size:0.85rem;color:#6B5A40;margin-bottom:2rem;">Go &bull; Baduk &bull; Weiqi</div>
+    <div style="display:flex;gap:0.5rem;justify-content:center;margin-bottom:2.5rem;">
+      <div style="width:10px;height:10px;border-radius:50%;background:#1C1814;animation:jspulse 1.2s ease-in-out infinite;"></div>
+      <div style="width:10px;height:10px;border-radius:50%;background:#1C1814;animation:jspulse 1.2s ease-in-out 0.2s infinite;"></div>
+      <div style="width:10px;height:10px;border-radius:50%;background:#1C1814;animation:jspulse 1.2s ease-in-out 0.4s infinite;"></div>
+    </div>
+    <style>@keyframes jspulse{0%,80%,100%{opacity:0.2;transform:scale(0.8)}40%{opacity:1;transform:scale(1)}}</style>
+    <noscript><p style="color:#8B3020;">JavaScript is required to run Joseki Sage.</p></noscript>
+    <div style="max-width:340px;font-size:0.8rem;color:#9B8A70;line-height:1.6;">
+      <h2 style="font-size:0.9rem;font-weight:600;color:#6B5A40;margin-bottom:0.5rem;">Free joseki trainer for Go/Baduk/Weiqi</h2>
+      <p>Create sequences with an interactive board editor, build a personal joseki library, drill variations in quiz mode, and sync your progress with Google Drive.</p>
+    </div>
+  </div>
+</div></div>
 <script type="text/babel">
 const { useState, useEffect, useRef, useMemo } = React;
 
@@ -118,7 +135,7 @@ function remapCoords(text,mH,mV,boardSize){
 const STAR19=[[3,3],[3,9],[3,15],[9,3],[9,9],[9,15],[15,3],[15,9],[15,15]];
 const STAR9=[[2,2],[2,6],[4,4],[6,2],[6,6]];
 const STAR13=[[3,3],[3,9],[6,6],[9,3],[9,9]];
-const STORAGE_KEY="joseki-lab-v8";
+const STORAGE_KEY="joseki-lab-v9";
 const ALPHA="ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 function sk(r,c){ return r+","+c; }
@@ -323,17 +340,20 @@ function isDefaultEntry(entry,folders){
 }
 function normalizeEntry(e){
   // Return a stable sorted-key representation of an entry for comparison
-  var keys=Object.keys(e).filter(function(k){ return k!=="id"; }).sort();
+  // enabled is excluded from the hash: it is saved on sync but must not trigger sync
+  var keys=Object.keys(e).filter(function(k){ return k!=="id"&&k!=="enabled"; }).sort();
   var out={id:e.id};
   keys.forEach(function(k){ out[k]=e[k]; });
   return out;
 }
 function normalizeLibrary(entries,folders){
   // Sort entries and folders by id for stable comparison
+  // collapsed is excluded from the hash: it is saved on sync but must not trigger sync
   var sortedEntries=entries.slice().sort(function(a,b){ return (a.id||"").localeCompare(b.id||""); })
     .map(normalizeEntry);
   var sortedFolders=folders.filter(function(f){ return f.id!=="f-default"&&f.id!=="f-custom"; })
-    .slice().sort(function(a,b){ return (a.id||"").localeCompare(b.id||""); });
+    .slice().sort(function(a,b){ return (a.id||"").localeCompare(b.id||""); })
+    .map(function(f){ var out={}; Object.keys(f).filter(function(k){ return k!=="collapsed"; }).sort().forEach(function(k){ out[k]=f[k]; }); return out; });
   return JSON.stringify({entries:sortedEntries,folders:sortedFolders});
 }
 function librariesMatch(localEntries,localFolders,driveData){
@@ -456,6 +476,32 @@ function commentAtPath(root,path){
   return n?n.comment||"":root.comment||"";
 }
 
+// Render a comment string into React parts: strips See . stubs and bare OGS
+// position-link brackets [text], converts [text](https://...) to <a> elements.
+// Category 2 OGS labels ([Mistake] etc.) are preserved as-is.
+var COMMENT_KEEP_BRACKETS=/^\[(Mistake|Questionable|Trick move|Black is tricked\.|White is [Tt]ricked\.?)\]$/;
+function renderComment(raw){
+  // Strip "See ." stubs left by incomplete OGS link stripping
+  raw=raw.replace(/[Ss]ee\s*\.\s*/g,"");
+  // Strip bare [text] brackets that are stripped OGS internal position links,
+  // but preserve recognised OGS position-type labels ([Mistake] etc.)
+  raw=raw.replace(/\[([^\]]+)\](?!\()/g,function(_,inner){
+    var token="["+inner+"]";
+    if(COMMENT_KEEP_BRACKETS.test(token)) return token;
+    return inner;
+  });
+  raw=raw.replace(/\s{2,}/g," ").trim();
+  // Convert [text](https://...) to <a> elements
+  var parts=[]; var re=/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
+  var last=0,m;
+  while((m=re.exec(raw))!==null){
+    if(m.index>last) parts.push(raw.slice(last,m.index));
+    parts.push(React.createElement("a",{key:m.index,href:m[2],target:"_blank",rel:"noopener noreferrer",style:{color:"#4A8870"}},m[1]));
+    last=m.index+m[0].length;
+  }
+  if(last<raw.length) parts.push(raw.slice(last));
+  return parts;
+}
 function countLeaves(n){
   if(!n||!n.children.length) return 1;
   return n.children.reduce(function(a,c){ return a+countLeaves(c); },0);
@@ -1220,7 +1266,7 @@ function App(){
 
         // Update lastModified so Drive conflict detection knows this device has fresh data
         var ts=new Date().toISOString();
-        try{ var lsData=JSON.parse(localStorage.getItem("joseki-lab-v8")||"{}"); lsData.lastModified=ts; localStorage.setItem("joseki-lab-v8",JSON.stringify(lsData)); }catch(ex){}
+        try{ var lsData=JSON.parse(localStorage.getItem("joseki-lab-v9")||"{}"); lsData.lastModified=ts; localStorage.setItem("joseki-lab-v9",JSON.stringify(lsData)); }catch(ex){}
         setImportErr(""); setShowImportMenu(false);
       }catch(err){ setImportErr("Import failed: "+err.message); }
     };
@@ -1947,7 +1993,7 @@ function App(){
 
   function driveHandleConflict(token,file,driveData,isStartup){
     var driveTime=new Date(file.modifiedTime);
-    var localRaw=localStorage.getItem("joseki-lab-v8");
+    var localRaw=localStorage.getItem("joseki-lab-v9");
     var localParsed=localRaw?JSON.parse(localRaw):null;
     var localTime=localParsed&&localParsed.lastModified?new Date(localParsed.lastModified):new Date(0);
 
@@ -1955,7 +2001,7 @@ function App(){
       driveApplyData(driveData);
       var ts=new Date().toISOString();
       localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
-      try{ var lsD=JSON.parse(localStorage.getItem("joseki-lab-v8")||"{}"); lsD.lastModified=ts; localStorage.setItem("joseki-lab-v8",JSON.stringify(lsD)); }catch(ex){}
+      try{ var lsD=JSON.parse(localStorage.getItem("joseki-lab-v9")||"{}"); lsD.lastModified=ts; localStorage.setItem("joseki-lab-v9",JSON.stringify(lsD)); }catch(ex){}
       setDriveStatus("idle");
     }
 
@@ -2085,13 +2131,22 @@ function App(){
   var driveFileIdRef=useRef(driveFileId);
   useEffect(function(){ driveTokenRef.current=driveToken; },[driveToken]);
   useEffect(function(){ driveFileIdRef.current=driveFileId; },[driveFileId]);
+  // foldersForSync strips collapsed so toggling collapse does not trigger auto-save
+  // entriesForSync strips enabled so toggling enabled does not trigger auto-save
+  // Both fields are still written to Drive on any sync that does fire
+  var foldersForSync=useMemo(function(){
+    return folders.map(function(f){ var out=Object.assign({},f); delete out.collapsed; return out; });
+  },[folders]);
+  var entriesForSync=useMemo(function(){
+    return entries.map(function(e){ var out=Object.assign({},e); delete out.enabled; return out; });
+  },[entries]);
   useEffect(function(){
     var t=driveTokenRef.current; var fid=driveFileIdRef.current;
     if(!t||!fid) return;
     if(driveLoadingRef.current) return; // skip auto-save during Drive-initiated loads
     var timer=setTimeout(function(){ driveSaveNow(t,fid); },2000);
     return function(){ clearTimeout(timer); };
-  },[entries,folders]);
+  },[entriesForSync,foldersForSync]);
 
   var enabledEntries=entries.filter(function(e){ return e.enabled!==false; });
   var practicePool=qIsSingleEntry&&qEntry?[qEntry]:enabledEntries;
@@ -3218,19 +3273,7 @@ function App(){
                 <div className="card" style={{borderColor:"#b5a060",marginBottom:"0.55rem"}}>
                   <span className="lbl" style={{marginBottom:"0.22rem"}}>Position note</span>
                   <p style={{fontSize:"0.79rem",fontStyle:"italic",color:"var(--color-text-secondary)",lineHeight:1.55}}>
-                    {(function(){
-                      var raw=qCurComment.replace(/[Ss]ee\s*\.\s*/g,"").replace(/\s{2,}/g," ").trim();
-                      var parts=[]; var re=/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
-                      var last=0,m;
-                      while((m=re.exec(raw))!==null){
-                        if(m.index>last) parts.push(raw.slice(last,m.index));
-                        parts.push(<a key={m.index} href={m[2]} target="_blank" rel="noopener noreferrer"
-                          style={{color:"#4A8870"}}>{m[1]}</a>);
-                        last=m.index+m[0].length;
-                      }
-                      if(last<raw.length) parts.push(raw.slice(last));
-                      return parts;
-                    })()}
+                    {renderComment(qCurComment)}
                   </p>
                 </div>
               )}
@@ -3576,19 +3619,7 @@ function App(){
                   {pComment&&(
                     <div style={{fontSize:"0.79rem",fontStyle:"italic",overflowY:"auto",flex:1,
                       color:"var(--color-text-secondary)",lineHeight:1.55}}>
-                      {(function(){
-                        var raw=pComment.replace(/See\s*\.\s*/g,"").trim();
-                        var parts=[]; var linkRe=/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
-                        var last=0,m;
-                        while((m=linkRe.exec(raw))!==null){
-                          if(m.index>last) parts.push(raw.slice(last,m.index));
-                          parts.push(<a key={m.index} href={m[2]} target="_blank" rel="noopener noreferrer"
-                            style={{color:"#4A8870"}}>{m[1]}</a>);
-                          last=m.index+m[0].length;
-                        }
-                        if(last<raw.length) parts.push(raw.slice(last));
-                        return parts;
-                      })()}
+                      {renderComment(pComment)}
                     </div>
                   )}
                   {/* Start practice from selected node button */}
@@ -3733,19 +3764,7 @@ function App(){
                   {modalComment&&(
                     <div style={{fontSize:"0.79rem",fontStyle:"italic",overflowY:"auto",flex:1,
                       color:"var(--color-text-secondary)",lineHeight:1.55}}>
-                      {(function(){
-                        var raw=modalComment.replace(/See\s*\.\s*/g,"").trim();
-                        var parts=[]; var re=/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g;
-                        var last=0,m;
-                        while((m=re.exec(raw))!==null){
-                          if(m.index>last) parts.push(raw.slice(last,m.index));
-                          parts.push(<a key={m.index} href={m[2]} target="_blank" rel="noopener noreferrer"
-                            style={{color:"#4A8870"}}>{m[1]}</a>);
-                          last=m.index+m[0].length;
-                        }
-                        if(last<raw.length) parts.push(raw.slice(last));
-                        return parts;
-                      })()}
+                      {renderComment(modalComment)}
                     </div>
                   )}
                   {!modalComment&&(
@@ -4107,7 +4126,7 @@ function App(){
                 setDriveConflict(null);
                 var ts=new Date().toISOString();
                 localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
-                try{ var lsD=JSON.parse(localStorage.getItem("joseki-lab-v8")||"{}"); lsD.lastModified=ts; localStorage.setItem("joseki-lab-v8",JSON.stringify(lsD)); }catch(ex){}
+                try{ var lsD=JSON.parse(localStorage.getItem("joseki-lab-v9")||"{}"); lsD.lastModified=ts; localStorage.setItem("joseki-lab-v9",JSON.stringify(lsD)); }catch(ex){}
               }}>Use Google Drive</button>
             </div>
           </div>
