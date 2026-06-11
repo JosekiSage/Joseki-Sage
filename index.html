@@ -2444,7 +2444,7 @@ function App(){
       }
       // Tap not on a continuation: clear everything and return to waiting in one step
       setQWrong(null); setQWrongContinuations([]); setQHint(false);
-      setQWrongIsTenuki(false); setQStatus("waiting");
+      setQWrongIsTenuki(false); setQWrongWasTenuki(false); setQStatus("waiting");
       return;
     }
 
@@ -2587,6 +2587,7 @@ function App(){
       if(!switched){
         // Wrong move
         setQWrong({r:r,c:c});
+        setQWrongWasTenuki(false);
         setQScore(function(s){ return {c:s.c,w:s.w+1}; });
         setQSession(function(ss){ return {points:ss.points, streak:0, totalC:ss.totalC, totalW:ss.totalW+1}; });
         setQStatus("wrong");
