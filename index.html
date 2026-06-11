@@ -1350,7 +1350,6 @@ function App(){
   function deleteEntry(id){ setEntries(function(prev){ return prev.filter(function(e){ return e.id!==id; }); }); bumpSync(); }
   function exportSgf(entry){ downloadBlob(treeToSgf(entry.root,entry.boardSize), entry.name.replace(/\s+/g,"_")+".sgf"); }
 
-  // Board scaling: derive from viewport, not element width (avoids ResizeObserver init lag)
   const boardRef=useRef(null);
   function calcBoardAvail(){
     var vw=window.innerWidth;
@@ -1367,7 +1366,24 @@ function App(){
   useEffect(function(){
     function onResize(){ setBoardAvail(calcBoardAvail()); }
     window.addEventListener("resize",onResize);
-    return function(){ window.removeEventListener("resize",onResize); };
+    // ResizeObserver on boardRef gives accurate width for the board container,
+    // avoiding the fixed-deduction approximation in practice mode.
+    var ro=null;
+    if(boardRef.current&&typeof ResizeObserver!=="undefined"){
+      ro=new ResizeObserver(function(entries){
+        var w=entries[0].contentRect.width;
+        if(w>0) setBoardAvail(function(prev){
+          // Only update when the board container width differs meaningfully
+          // from the current boardAvail, to avoid thrashing on minor reflows.
+          return Math.abs(w-prev)>2?Math.floor(w):prev;
+        });
+      });
+      ro.observe(boardRef.current);
+    }
+    return function(){
+      window.removeEventListener("resize",onResize);
+      if(ro) ro.disconnect();
+    };
   },[]);
   function ScaledBoard(props){
     var size=props.size;
@@ -1923,7 +1939,7 @@ function App(){
   const[qSettings,setQSettings]=useState({
     mirrorRandom:false, randomNode:false,
     invertRandom:false, showAnnotations:true,
-    showScoring:true, playerRole:"random"
+    showScoring:true, playerRole:"random", fullBoard:false
   });
   const[qStartPath,setQStartPath]=useState([]);
   function setSetting(k,v){ setQSettings(function(s){ return {...s,[k]:v}; }); }
@@ -1933,6 +1949,7 @@ function App(){
   const[qIsSingleEntry,setQIsSingleEntry]=useState(false);
   const[qRoot,setQRoot]=useState(null);
   const[qPath,setQPath]=useState([]);
+  const[qFixedBbox,setQFixedBbox]=useState(null); // locked at joseki start, stable during session
   const qPathRef=useRef([]);
   const[qStones,setQStones]=useState({});
   const[qStatus,setQStatus]=useState("waiting");
@@ -2207,6 +2224,33 @@ function App(){
     }
     qPathRef.current=startPath;
     setQStartPath(startPath);
+    // Compute fixed bbox from the full subtree reachable from the start node.
+    // This is locked for the duration of the joseki so the board never rescales mid-sequence.
+    (function(){
+      var startNode=nodeAtPath(root,startPath)||root;
+      var b=null;
+      function addPt(r,c){
+        if(!b){ b={minR:r,maxR:r,minC:c,maxC:c}; return; }
+        if(r<b.minR)b.minR=r; if(r>b.maxR)b.maxR=r;
+        if(c<b.minC)b.minC=c; if(c>b.maxC)b.maxC=c;
+      }
+      // Include setup stones at root
+      Object.keys(root.setupStones||{}).forEach(function(k){
+        var p=k.split(","); addPt(Number(p[0]),Number(p[1]));
+      });
+      // Include all stones already on the board at the start path
+      Object.keys(initStones).forEach(function(k){
+        var p=k.split(","); addPt(Number(p[0]),Number(p[1]));
+      });
+      // Walk the full subtree from startNode
+      function walk(node){
+        if(node.move&&!node.move.pass) addPt(node.move.r,node.move.c);
+        (node.annotations||[]).forEach(function(a){ addPt(a.r,a.c); });
+        (node.children||[]).forEach(walk);
+      }
+      walk(startNode);
+      setQFixedBbox(b);
+    })();
     setQEntry(entry); setQRoot(root); setQPath(startPath); setQStones(initStones);
     setQStatus("waiting"); setQWrong(null); setQHint(false); setQTenuki(false); setQWrongContinuations([]); setQPendingOpp(null); setQScore({c:0,w:0}); setQWrongIsTenuki(false); setQWrongWasTenuki(false); setQOppTenuki(false); setQCorrectTenuki(false);
     setQPlayerColor(effectivePc);
@@ -2353,7 +2397,7 @@ function App(){
         var finalPath=qPath.concat(idx);
         qPathRef.current=finalPath;
         setQPath(finalPath);
-      }, 350);
+      }, 150);
     } else {
       setQPendingOpp({move:child.move,childIdx:idx});
     }
@@ -2411,7 +2455,7 @@ function App(){
             qPathRef.current=revNewPath;
             setQWrong(null); setQStones(revResult.stones); setQPendingOpp(null);
             setQWrongContinuations([]); setQHint(false); setQStatus("correct");
-            setTimeout(function(){ setQPath(revNewPath); setQStatus("waiting"); },850);
+            setTimeout(function(){ setQPath(revNewPath); setQStatus("waiting"); },500);
           } else {
             // Move belongs to a different joseki -- find and switch
             var revSwitched=false;
@@ -2433,7 +2477,7 @@ function App(){
                 setQEntry(revCand); setQRoot(revCRoot); setQPath(revNewPath2); setQStones(revNewStones);
                 setQPendingOpp(null);
                 setQWrongContinuations([]); setQHint(false); setQStatus("correct");
-                setTimeout(function(){ setQStatus("waiting"); },850);
+                setTimeout(function(){ setQStatus("waiting"); },500);
                 revSwitched=true;
               }
             }
@@ -2549,7 +2593,7 @@ function App(){
       setQHint(false); setQWrongContinuations([]);
       // Advance path and let the opponent scheduling effect handle content/pause logic
       setQStatus("correct");
-      setTimeout(function(){ setQPath(newActivePath); setQStatus("waiting"); },850);
+      setTimeout(function(){ setQPath(newActivePath); setQStatus("waiting"); },500);
     } else {
       // Not in current joseki -- try dynamic switch to another enabled joseki
       var switched=false;
@@ -2580,7 +2624,7 @@ function App(){
         return {points:ss.points+pts, streak:newStreak, totalC:ss.totalC+1, totalW:ss.totalW};
       });
       setQHint(false); setQWrongContinuations([]); setQStatus("correct");
-          setTimeout(function(){ setQStatus("waiting"); },850);
+          setTimeout(function(){ setQStatus("waiting"); },500);
           switched=true;
         }
       }
@@ -3087,6 +3131,7 @@ function App(){
                 <p className="sect">Display</p>
                 <div className="trow"><span className="tlbl">Show scoring</span><Toggle checked={qSettings.showScoring} onChange={function(v){ setSetting("showScoring",v); }}/></div>
                 <div className="trow"><span className="tlbl">Show position annotations<span style={{fontSize:"0.65rem",color:"var(--color-text-tertiary)",fontStyle:"italic",display:"block"}}>Disabling leads to faster play</span></span><Toggle checked={qSettings.showAnnotations} onChange={function(v){ setSetting("showAnnotations",v); }}/></div>
+                <div className="trow"><span className="tlbl">Always show full board</span><Toggle checked={qSettings.fullBoard} onChange={function(v){ setSetting("fullBoard",v); }}/></div>
               </div>
               {singlePracticeEntry&&(
                 <div style={{fontSize:"0.78rem",color:"var(--color-text-secondary)",marginBottom:"0.5rem",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
@@ -3150,44 +3195,7 @@ function App(){
               <div ref={boardRef} style={{width:"100%",marginBottom:"0.65rem"}}>
                 <div className="bshadow" style={{display:"inline-block"}}>
                   <CroppedBoard size={qEntry.boardSize}
-                    bbox={(function(){
-                      // Use stones currently on the board + immediate children
-                      // (not the whole tree) so the view stays focused on the
-                      // current position rather than the full joseki extent.
-                      var b=null;
-                      function addPt(r,c){
-                        if(!b){ b={minR:r,maxR:r,minC:c,maxC:c}; return; }
-                        if(r<b.minR)b.minR=r; if(r>b.maxR)b.maxR=r;
-                        if(c<b.minC)b.minC=c; if(c>b.maxC)b.maxC=c;
-                      }
-                      // Setup stones
-                      Object.keys(qRoot.setupStones||{}).forEach(function(k){
-                        var p=k.split(","); addPt(Number(p[0]),Number(p[1]));
-                      });
-                      // Stones on the current path
-                      Object.keys(qStones).forEach(function(k){
-                        var p=k.split(","); addPt(Number(p[0]),Number(p[1]));
-                      });
-                      // Always include immediate children in bbox so the player
-                      // can reach valid moves regardless of showAnnotations setting.
-                      // Letter annotations only included when showAnnotations is on
-                      // (they reveal where to play so should stay hidden otherwise).
-                      if(qNode&&qNode.children){
-                        qNode.children.forEach(function(ch){
-                          if(ch.move&&!ch.move.pass) addPt(ch.move.r,ch.move.c);
-                        });
-                        if(qSettings.showAnnotations){
-                          (qNode.annotations||[]).forEach(function(a){
-                            if(a.type==="letter") addPt(a.r,a.c);
-                          });
-                        }
-                      }
-                      // Wrong continuations / hints
-                      qWrongContinuations.forEach(function(m){
-                        addPt(m.r,m.c);
-                      });
-                      return b;
-                    })()}
+                    bbox={qSettings.fullBoard?null:qFixedBbox}
                     stones={qStones}
                     onPlace={handleQuizBoardClick}
                     lastMove={qPath.length>0?nodeAtPath(qRoot,qPath).move:null}
