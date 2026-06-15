@@ -2336,17 +2336,8 @@ function App(){
       (resolvedNode.comment&&resolvedNode.comment.trim().length>0)||
       (resolvedNode.annotations&&resolvedNode.annotations.some(function(a){ return a.type==="letter"||a.type==="triangle"; }))
     );
-    if(currentNodeHasContent&&!isPlayerTurn&&!qPendingOpp){
-      // Pause: pick opponent move and show as ghost stone without playing it yet
-      var oppColor2=qPlayerColor==="B"?"W":"B";
-      var oppKids2=resolvedNode.children.map(function(ch,i){ return {ch:ch,i:i}; })
-        .filter(function(x){ return x.ch.move&&x.ch.move.color===oppColor2; });
-      if(oppKids2.length){
-        var pick2=oppKids2[Math.floor(Math.random()*oppKids2.length)];
-        setQPendingOpp({move:pick2.ch.move,childIdx:pick2.i});
-      }
-      return;
-    }
+    // Step 2b: if the current node has content and it's the opponent's turn,
+    // fall through to Step 4 — the opponent auto-plays and the note is shown after.
 
     // Step 3: If player's turn, wait for input
     if(isPlayerTurn){ setQPendingOpp(null); return; }
@@ -2359,31 +2350,22 @@ function App(){
     var pick=oppKids[Math.floor(Math.random()*oppKids.length)];
     var child=pick.ch; var idx=pick.i;
 
-    // Only pause for ghost stone if showAnnotations is on AND the opponent's
-    // next node has content worth pausing for.
-    var nextNode=child;
-    var hasContent=showAnnotationsRef.current&&(
-      (nextNode.comment&&nextNode.comment.trim().length>0)||
-      (nextNode.annotations&&nextNode.annotations.some(function(a){ return a.type==="letter"||a.type==="triangle"; }))
-    );
-    if(!hasContent){
-      var oppMove=child.move;
-      setTimeout(function(){
-        if(!oppMove.pass){
-          var oppResult=applyMove(qStones,oppMove.r,oppMove.c,oppMove.color,qEntry.boardSize);
-          if(oppResult.captured>0) playCapture(oppResult.captured); else playTok();
-          setQStones(oppResult.stones);
-        } else {
-          setQOppTenuki(true); setQCorrectTenuki(false);
-        }
-        setQPendingOpp(null);
-        var finalPath=qPath.concat(idx);
-        qPathRef.current=finalPath;
-        setQPath(finalPath);
-      }, 150);
-    } else {
-      setQPendingOpp({move:child.move,childIdx:idx});
-    }
+    // Always auto-play the opponent's move — never show a ghost stone.
+    // Position notes on the opponent's node will be shown after the move plays.
+    var oppMove=child.move;
+    setTimeout(function(){
+      if(!oppMove.pass){
+        var oppResult=applyMove(qStones,oppMove.r,oppMove.c,oppMove.color,qEntry.boardSize);
+        if(oppResult.captured>0) playCapture(oppResult.captured); else playTok();
+        setQStones(oppResult.stones);
+      } else {
+        setQOppTenuki(true); setQCorrectTenuki(false);
+      }
+      setQPendingOpp(null);
+      var finalPath=qPath.concat(idx);
+      qPathRef.current=finalPath;
+      setQPath(finalPath);
+    }, 150);
   },[tab,qPath,qStatus,qIsPlayer]);
 
 
@@ -3161,11 +3143,10 @@ function App(){
                     lastMove={qPath.length>0?nodeAtPath(qRoot,qPath).move:null}
                     hintStones={qWrongContinuations}
                     wrongStone={qWrong}
-                    pendingStone={qPendingOpp?qPendingOpp.move:null}
                     showCoords={true}
                     annotations={qAnnotations}
                     nextColor={qNextMoveColor}
-                    noHover={!!qPendingOpp||qStatus==="wrong"||qStatus==="done"}/>
+                    noHover={qStatus==="wrong"||qStatus==="done"}/>
                 </div>
               </div>
               {/* Mobile-only info (hidden on desktop where side panel shows it) */}
@@ -3229,7 +3210,7 @@ function App(){
               {/* Status messages */}
               {(qStatus==="wrong"&&qWrongIsTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki - the correct move is to play elsewhere. Tap the board to dismiss, then press <strong>Tenuki</strong> to continue.</div>)}
               {qCorrectTenuki&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5,fontWeight:600}}>Tenuki</div>)}
-              {(qStatus==="wrong"&&qWrongWasTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki is not the right move here - a local response is needed. Tap the board to see the correct continuation.</div>)}
+              {(qStatus==="wrong"&&qWrongWasTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki is not the right move here - a local response is needed.</div>)}
               {(qOppTenuki&&qStatus==="waiting")&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Opponent tenuki.</div>)}
               {(qPendingOpp&&qPendingOpp.move&&qPendingOpp.move.pass)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Opponent tenuki - tap the board to confirm.</div>)}
               {/* Position note */}
@@ -3302,7 +3283,7 @@ function App(){
               {/* Status messages */}
               {(qStatus==="wrong"&&qWrongIsTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki - the correct move is to play elsewhere. Tap the board to dismiss, then press <strong>Tenuki</strong> to continue.</div>)}
               {qCorrectTenuki&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5,fontWeight:600}}>Tenuki</div>)}
-              {(qStatus==="wrong"&&qWrongWasTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki is not the right move here - a local response is needed. Tap the board to see the correct continuation.</div>)}
+              {(qStatus==="wrong"&&qWrongWasTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki is not the right move here - a local response is needed.</div>)}
               {(qOppTenuki&&qStatus==="waiting")&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Opponent tenuki.</div>)}
               {(qPendingOpp&&qPendingOpp.move&&qPendingOpp.move.pass)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Opponent tenuki - tap the board to confirm.</div>)}
               {/* Position note */}
