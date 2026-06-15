@@ -1184,6 +1184,8 @@ function App(){
   const importRef=useRef(null);
   const[importErr,setImportErr]=useState("");
   const[showExportMenu,setShowExportMenu]=useState(false);
+  const[showExportStatsNotice,setShowExportStatsNotice]=useState(false);
+  const[pendingExportWhich,setPendingExportWhich]=useState(null);
   const[showImportMenu,setShowImportMenu]=useState(false);
   const[confirmDialog,setConfirmDialog]=useState(null);
   const importDefaultRef=useRef(null);
@@ -1948,6 +1950,14 @@ function App(){
   const[qScore,setQScore]=useState({c:0,w:0});
   // Session-level scoring (persists across josekis within one practice session)
   const[qSession,setQSession]=useState({points:0,streak:0,totalC:0,totalW:0});
+  // practiceStats: per-entry stats keyed by entry id
+  // {[id]: {correct:N, total:N, sessions:N, lastPracticed:"ISO"}}
+  const[practiceStats,setPracticeStats]=useState(function(){
+    try{ var s=localStorage.getItem("joseki-practice-stats"); return s?JSON.parse(s):{}; }catch(e){ return {}; }
+  });
+  function savePracticeStats(stats){
+    try{ localStorage.setItem("joseki-practice-stats",JSON.stringify(stats)); }catch(e){}
+  }
   const[qScorePulse,setQScorePulse]=useState(false);
   function triggerScorePulse(){ setQScorePulse(true); setTimeout(function(){ setQScorePulse(false); },500); }
   const[qPlayerColor,setQPlayerColor]=useState("B");
@@ -2027,10 +2037,13 @@ function App(){
       driveSaveNow(token,file.id); return;
     }
 
-    // Content comparison — if libraries are identical, no conflict regardless of timestamps
+    // Content comparison — if libraries and stats are identical, no conflict
     var localCustomEntries=getCustomEntries();
     var localCustomFolders=getCustomFolders();
-    if(librariesMatch(localCustomEntries,localCustomFolders,driveData)){
+    var driveStats=driveData.practiceStats||{};
+    var localStatsKey=JSON.stringify(practiceStats);
+    var driveStatsKey=JSON.stringify(driveStats);
+    if(librariesMatch(localCustomEntries,localCustomFolders,driveData)&&localStatsKey===driveStatsKey){
       // Content is identical — just update sync timestamp, no action needed
       updateSyncTimeOnly(); return;
     }
@@ -2045,7 +2058,7 @@ function App(){
     driveFindFile(token).then(function(file){
       if(!file){
         // No Drive file yet — upload local custom library
-        var localData={entries:getCustomEntries(),folders:getCustomFolders(),lastModified:new Date().toISOString()};
+        var localData={entries:getCustomEntries(),folders:getCustomFolders(),practiceStats:practiceStats,lastModified:new Date().toISOString()};
         return driveWriteFile(token,null,localData).then(function(newId){
           if(newId){ localStorage.setItem("joseki-drive-file-id",newId); setDriveFileId(newId); var ts=new Date().toISOString(); localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts); }
           setDriveStatus("idle");
@@ -2062,7 +2075,7 @@ function App(){
   function driveSaveNow(token,fileId){
     if(!token||!fileId) return;
     setDriveStatus("syncing");
-    var data={entries:getCustomEntries(),folders:getCustomFolders(),lastModified:new Date().toISOString()};
+    var data={entries:getCustomEntries(),folders:getCustomFolders(),practiceStats:practiceStats,lastModified:new Date().toISOString()};
     driveWriteFile(token,fileId,data).then(function(result){
       if(result&&result._driveAuthError){ driveHandleAuthExpiry(); return; }
       if(result&&result._driveQuotaError){ setDriveStatus("error"); setDriveError("Google Drive storage full — free up space and try again."); return; }
@@ -2074,6 +2087,11 @@ function App(){
   function driveApplyData(data){
     if(!data) return;
     driveLoadingRef.current=true;
+    if(data.practiceStats){
+      var merged=Object.assign({},practiceStats,data.practiceStats);
+      setPracticeStats(merged);
+      savePracticeStats(merged);
+    }
     setEntries(function(prev){
       var defaults=prev.filter(function(e){ return isDefaultEntry(e,folders); });
       var incoming=data.entries||[];
@@ -2298,6 +2316,27 @@ function App(){
     }
     return text;
   })();
+  // Record practice completion when sequence finishes
+  useEffect(function(){
+    if(qStatus!=="done"||!qEntry) return;
+    var id=qEntry.id;
+    var correct=qScore.c; var total=qScore.c+qScore.w;
+    var now=new Date().toISOString();
+    setPracticeStats(function(prev){
+      var existing=prev[id]||{correct:0,total:0,sessions:0,lastPracticed:null};
+      var updated=Object.assign({},prev,{
+        [id]:{
+          correct:existing.correct+correct,
+          total:existing.total+total,
+          sessions:existing.sessions+1,
+          lastPracticed:now
+        }
+      });
+      savePracticeStats(updated);
+      return updated;
+    });
+  },[qStatus,qEntry]);
+
   var qAnnotations=useMemo(function(){
     if(!qNode||!qSettings.showAnnotations) return [];
     var a=qNode.annotations||[];
@@ -2744,14 +2783,39 @@ function App(){
           <div className="sn">{entry.name}</div>
           <div className="sm">{entry.boardSize}x{entry.boardSize} | {countLeaves(entry.root)} var</div>
           {entry.notes&&<div className="sno">{entry.notes}</div>}
-          <div className="brow">
+          {(function(){
+            var st=practiceStats[entry.id];
+            if(st&&st.sessions>0){
+              var acc=st.total>0?Math.round(100*st.correct/st.total):0;
+              var d=new Date(st.lastPracticed);
+              var dateStr=d.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});
+              return (
+                <div style={{display:"flex",alignItems:"center",gap:"0.5rem",fontSize:"0.72rem",color:"var(--color-text-tertiary)",marginBottom:"0.3rem",flexWrap:"wrap"}}>
+                  <span>{st.sessions} {st.sessions===1?"session":"sessions"}</span>
+                  <span>·</span>
+                  <span>{acc}% correct</span>
+                  <span>·</span>
+                  <span>Last: {dateStr}</span>
+                  <button className="btn btnsm" style={{fontSize:"0.68rem",padding:"1px 6px",marginLeft:"auto"}} onClick={function(){
+                    setPracticeStats(function(prev){
+                      var next=Object.assign({},prev);
+                      delete next[entry.id];
+                      savePracticeStats(next);
+                      return next;
+                    });
+                  }}>Reset</button>
+                </div>
+              );
+            }
+            return null;
+          })()}
+        <div className="brow">
             <button className="btn btnsm" onClick={function(){
               setSinglePracticeEntry(entry);
               setQEntry(null);
               setTab(TABS.quiz);
             }}>Practice</button>
             <button className="btn btnsm" onClick={function(){ openEditor(entry); }}>Edit</button>
-            <button className="btn btnsm" onClick={function(){ exportSgf(entry); }}>SGF</button>
             <button className="btn btnsm" onClick={function(){ toggleEnabled(entry.id); }}
               style={entry.enabled!==false?{background:"#4A8870",color:"#fff",borderColor:"#2E6058"}:{}}>
               {entry.enabled===false?"Off":"On"}
@@ -2977,8 +3041,8 @@ function App(){
               {showExportMenu&&(
                 <div style={{position:"absolute",top:"110%",right:0,background:"#2A2018",border:"0.5px solid #5A4A30",borderRadius:6,zIndex:200,minWidth:180,boxShadow:"0 4px 16px rgba(0,0,0,0.4)"}}>
                   <div style={{padding:"0.3rem 0.7rem",fontSize:"0.68rem",color:"#8B7A60",borderBottom:"0.5px solid #5A4A30"}}>Choose library</div>
-                  <button className="btn" style={{display:"block",width:"100%",textAlign:"left",padding:"0.4rem 0.7rem",fontSize:"0.78rem",color:"#C8BCA8",border:"none",borderRadius:0}} onClick={function(){ handleExportLib("default"); }}>Default Library</button>
-                  <button className="btn" style={{display:"block",width:"100%",textAlign:"left",padding:"0.4rem 0.7rem",fontSize:"0.78rem",color:"#C8BCA8",border:"none",borderRadius:0}} onClick={function(){ handleExportLib("custom"); }}>Custom Library</button>
+                  <button className="btn" style={{display:"block",width:"100%",textAlign:"left",padding:"0.4rem 0.7rem",fontSize:"0.78rem",color:"#C8BCA8",border:"none",borderRadius:0}} onClick={function(){ setShowExportMenu(false); setPendingExportWhich("default"); setShowExportStatsNotice(true); }}>Default Library</button>
+                  <button className="btn" style={{display:"block",width:"100%",textAlign:"left",padding:"0.4rem 0.7rem",fontSize:"0.78rem",color:"#C8BCA8",border:"none",borderRadius:0}} onClick={function(){ setShowExportMenu(false); setPendingExportWhich("custom"); setShowExportStatsNotice(true); }}>Custom Library</button>
                 </div>
               )}
             </div>
@@ -4024,7 +4088,7 @@ function App(){
                     <P>Use the search box at the top of the library to filter joseki in real time by name or folder name, across both Default and Custom libraries. Click × to clear the search.</P>
                     <H2>Folders</H2>
                     <P>Joseki are organized into two top-level libraries: <B>Default</B> and <B>Custom</B>. Within each you can create named folders to group related joseki.</P>
-                    <P>When first opened in a browser, the app automatically fetches the Default Library. If opened from a local file, it starts with a small demo library — import the full default library manually via the Import menu.</P>
+                    <P>When first opened, the app automatically fetches the Default Library from the server. On subsequent visits, your library is loaded from your browser's local storage. If the fetch fails, the app starts with an empty library.</P>
                     <P><B>Creating a folder:</B> Enter a name in the folder field and tap + Folder.</P>
                     <P><B>Renaming or deleting a folder:</B> Tap the ⋮ options next to the folder name. Deleting a folder also deletes all joseki inside it. This cannot be undone.</P>
                     <P><B>Moving joseki between folders:</B> Open the joseki editor and change the Folder field at the top.</P>
@@ -4110,6 +4174,25 @@ function App(){
                   </div>
                 );
               })()}
+            </div>
+          </div>
+        </div>
+      )}
+      {showExportStatsNotice&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}
+          onClick={function(){ setShowExportStatsNotice(false); setPendingExportWhich(null); }}>
+          <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:10,width:"100%",maxWidth:380,padding:"1.4rem",boxShadow:"0 8px 32px rgba(0,0,0,0.35)"}}
+            onClick={function(e){ e.stopPropagation(); }}>
+            <p style={{fontWeight:600,fontSize:"0.95rem",color:"var(--color-text-primary)",marginBottom:"0.6rem"}}>Note on practice statistics</p>
+            <p style={{fontSize:"0.82rem",color:"var(--color-text-secondary)",marginBottom:"1rem",lineHeight:1.6}}>
+              Practice statistics are not included in library exports. They are stored in your browser and synced separately via Google Drive.
+            </p>
+            <div style={{display:"flex",gap:"0.5rem",justifyContent:"flex-end"}}>
+              <button className="btn btnsm" onClick={function(){ setShowExportStatsNotice(false); setPendingExportWhich(null); }}>Cancel</button>
+              <button className="btn btnsm" style={{background:"#4A8870",color:"#fff",borderColor:"#2E6058"}}
+                onClick={function(){ handleExportLib(pendingExportWhich); setShowExportStatsNotice(false); setPendingExportWhich(null); }}>
+                Export anyway
+              </button>
             </div>
           </div>
         </div>
