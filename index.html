@@ -163,13 +163,13 @@ function downloadBlob(text, filename, mime){
 }
 
 // Node structure
-let _nid=1;
+function _genId(){ return (typeof crypto!=="undefined"&&crypto.randomUUID)?crypto.randomUUID():(Date.now().toString(36)+Math.random().toString(36).slice(2)); }
 function makeNode(move){
-  return{id:_nid++, type:move?"move":"root", move:move||null, comment:"", children:[], setupStones:{}, setupAdded:[], setupRemoved:[], annotations:[], colorOffset:0};
+  return{id:_genId(), type:move?"move":"root", move:move||null, comment:"", children:[], setupStones:{}, setupAdded:[], setupRemoved:[], annotations:[], colorOffset:0};
 }
 function rootNode(){ return makeNode(null); }
 function makeSetupNode(added,removed){
-  return{id:_nid++, type:"setup", move:null, comment:"", children:[], setupStones:{}, setupAdded:added||[], setupRemoved:removed||[], annotations:[], colorOffset:0};
+  return{id:_genId(), type:"setup", move:null, comment:"", children:[], setupStones:{}, setupAdded:added||[], setupRemoved:removed||[], annotations:[], colorOffset:0};
 }
 function deepClone(n){
   if(!n) return null;
@@ -1029,29 +1029,35 @@ const TABS={library:"library",quiz:"quiz",editor:"editor",about:"about"};
 // and the attempted move (moveR,moveC,playerColor) is a valid child.
 // currentStones: object keyed by "r,c" with {color} values (qStones format).
 // Returns {path, childIdx} or null.
+// Shared helpers for joseki matching
+// Normalise a stone map so all values are plain color strings (not {color,moveNum} objects)
+function _normaliseStonesMap(st){
+  var out={};
+  Object.keys(st).forEach(function(k){ out[k]=st[k].color!==undefined?st[k].color:st[k]; });
+  return out;
+}
+// Check if two normalised stone maps are identical
+function _boardsMatch(josekiSt,currentSt){
+  var jk=Object.keys(josekiSt);
+  if(jk.length!==Object.keys(currentSt).length) return false;
+  for(var i=0;i<jk.length;i++){
+    var k=jk[i]; var cs=currentSt[k]; if(!cs) return false;
+    var cc=cs.color!==undefined?cs.color:cs; if(josekiSt[k]!==cc) return false;
+  }
+  return true;
+}
+// Build normalised stone map for a given path in a joseki root
+function _stonesForPath(root,path){
+  return _normaliseStonesMap(stateAlongPath({...root,_boardSize:root._boardSize||19},path).stones);
+}
+
 function findPositionInJoseki(josekiRoot, currentStones){
   // Find path in josekiRoot where board state exactly matches currentStones
-  var rootForState={...josekiRoot,_boardSize:josekiRoot._boardSize||19};
-  function stonesForPath(path){
-    var st=stateAlongPath(rootForState,path).stones;
-    var out={};
-    Object.keys(st).forEach(function(k){ out[k]=st[k].color!==undefined?st[k].color:st[k]; });
-    return out;
-  }
-  function boardsMatch(josekiSt,currentSt){
-    var jk=Object.keys(josekiSt),ck=Object.keys(currentSt);
-    if(jk.length!==ck.length) return false;
-    for(var i=0;i<jk.length;i++){
-      var k=jk[i]; var cs=currentSt[k]; if(!cs) return false;
-      var cc=cs.color!==undefined?cs.color:cs; if(josekiSt[k]!==cc) return false;
-    }
-    return true;
-  }
   var result=null;
   function walk(node,path){
     if(result) return;
-    var jsst=stonesForPath(path);
-    if(boardsMatch(jsst,currentStones)){ result=path; return; }
+    var jsst=_stonesForPath(josekiRoot,path);
+    if(_boardsMatch(jsst,currentStones)){ result=path; return; }
     if(Object.keys(jsst).length<Object.keys(currentStones).length)
       node.children.forEach(function(ch,i){ walk(ch,path.concat(i)); });
   }
@@ -1060,37 +1066,15 @@ function findPositionInJoseki(josekiRoot, currentStones){
 }
 
 function findMatchInJoseki(josekiRoot, currentStones, moveR, moveC, playerColor){
-  // Build the full stone map for a path using stateAlongPath (handles setup node deltas)
-  var rootForState2={...josekiRoot,_boardSize:josekiRoot._boardSize||19};
-  function stonesForPath(root, path){
-    var st=stateAlongPath(rootForState2,path).stones;
-    var out={};
-    Object.keys(st).forEach(function(k){ out[k]=st[k].color!==undefined?st[k].color:st[k]; });
-    return out;
-  }
-  // Check if joseki stone map matches the current board exactly (same keys, same colors)
-  function boardsMatch(josekiSt, currentSt){
-    var jk=Object.keys(josekiSt), ck=Object.keys(currentSt);
-    if(jk.length!==ck.length) return false;
-    for(var i=0;i<jk.length;i++){
-      var k=jk[i];
-      var cs=currentSt[k];
-      if(!cs) return false;
-      // currentStones values are {color,moveNum} objects
-      var cc=cs.color!==undefined?cs.color:cs;
-      if(josekiSt[k]!==cc) return false;
-    }
-    return true;
-  }
   var result=null;
   function walk(node, path){
     if(result) return;
-    var josekiSt=stonesForPath(josekiRoot,path);
+    var josekiSt=_stonesForPath(josekiRoot,path);
     var jCount=Object.keys(josekiSt).length;
     var cCount=Object.keys(currentStones).length;
     // Prune: if joseki already has more stones than board, no match possible
     if(jCount>cCount) return;
-    if(boardsMatch(josekiSt, currentStones)){
+    if(_boardsMatch(josekiSt, currentStones)){
       // Check if attempted move is a valid child
       for(var i=0;i<node.children.length;i++){
         var ch=node.children[i];
@@ -1212,14 +1196,6 @@ function App(){
         var imported=parseImport(ev.target.result);
         var rootId=which==="default"?"f-default":"f-custom";
 
-        // Collect all folder ids under a given parent (recursively) from a folder list
-        function getFolderIds(parentId, allFolders){
-          var ids=[parentId];
-          allFolders.filter(function(f){ return f.parentId===parentId; })
-            .forEach(function(f){ getFolderIds(f.id,allFolders).forEach(function(id){ ids.push(id); }); });
-          return ids;
-        }
-
         // Process imported folders:
         // - Strip out any f-default/f-custom from imported data
         // - Any folder with no parent (or whose parent isn't in the imported set)
@@ -1244,7 +1220,7 @@ function App(){
 
         setFolders(function(prev){
           // Remove existing folders under the target root
-          var existingTargetIds=getFolderIds(rootId,prev);
+          var existingTargetIds=getAllDescendantFolderIds(rootId,prev);
           var keep=prev.filter(function(f){
             return f.id==="f-default"||f.id==="f-custom"||existingTargetIds.indexOf(f.id)===-1;
           });
@@ -1264,7 +1240,7 @@ function App(){
 
         // Update lastModified so Drive conflict detection knows this device has fresh data
         var ts=new Date().toISOString();
-        try{ var lsData=JSON.parse(localStorage.getItem("joseki-lab-v10")||"{}"); lsData.lastModified=ts; localStorage.setItem("joseki-lab-v10",JSON.stringify(lsData)); }catch(ex){}
+        try{ var lsData=JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}"); lsData.lastModified=ts; localStorage.setItem(STORAGE_KEY,JSON.stringify(lsData)); }catch(ex){}
         bumpSync(); setImportErr(""); setShowImportMenu(false);
       }catch(err){ setImportErr("Import failed: "+err.message); }
     };
@@ -1274,17 +1250,7 @@ function App(){
     try{
       var rootId=which==="default"?"f-default":"f-custom";
       var filename=which==="default"?"JS-Default-Library.json":"JS-Custom-Library.json";
-      // Guard against circular parentId references with a visited set
-      function getFolderIds(parentId,visited){
-        visited=visited||new Set();
-        if(visited.has(parentId)) return [];
-        visited.add(parentId);
-        var ids=[parentId];
-        folders.filter(function(f){ return f.parentId===parentId; })
-          .forEach(function(f){ getFolderIds(f.id,visited).forEach(function(id){ ids.push(id); }); });
-        return ids;
-      }
-      var folderIds=getFolderIds(rootId);
+      var folderIds=getAllDescendantFolderIds(rootId,folders);
       var expFolders=folders.filter(function(f){ return folderIds.indexOf(f.id)!==-1&&f.id!=="f-default"&&f.id!=="f-custom"; });
       var expEntries=entries.filter(function(e){ return folderIds.indexOf(e.folderId)!==-1; });
       var json=JSON.stringify({entries:expEntries,folders:expFolders},null,2);
@@ -1335,8 +1301,11 @@ function App(){
     setEntries(function(prev){ return prev.map(function(e){ return ids.indexOf(e.folderId)!==-1?{...e,enabled:val}:e; }); });
   }
   function deleteFolder(id){
-    setFolders(function(prev){ return prev.filter(function(f){ return f.id!==id; }); });
-    setEntries(function(prev){ return prev.map(function(e){ return e.folderId===id?{...e,folderId:null}:e; }); });
+    // Collect this folder and all its descendants so they are all removed
+    var ids=getAllDescendantFolderIds(id,folders);
+    setFolders(function(prev){ return prev.filter(function(f){ return ids.indexOf(f.id)===-1; }); });
+    // Entries in any deleted folder are removed entirely
+    setEntries(function(prev){ return prev.filter(function(e){ return ids.indexOf(e.folderId)===-1; }); });
     bumpSync();
   }
 
@@ -1356,9 +1325,26 @@ function App(){
     return Math.min(halfW, maxH);
   }
   const[boardAvail,setBoardAvail]=useState(calcBoardAvail);
+  // qBoardPx: board size for full-viewport practice mode on desktop.
+  // Uses viewport directly - no DOM measurement needed since board column
+  // has no other content constraining its size.
+  function calcQBoardPx(){
+    var vw=window.innerWidth;
+    var vh=window.innerHeight;
+    if(vw<700){
+      // Mobile: single column, full width minus padding, minus UI chrome
+      return Math.min(vw-24, vh-220);
+    }
+    // Desktop: board column = viewport width minus 220px side panel minus padding
+    var colW=vw-220-32;
+    // Available height = viewport minus topbar(56) minus botnav(58) minus board padding(24)
+    var colH=vh-56-58-24;
+    return Math.max(120, Math.min(colW, colH));
+  }
+  const[qBoardPx,setQBoardPx]=useState(calcQBoardPx);
   var isMobile=boardAvail<380;
   useEffect(function(){
-    function onResize(){ setBoardAvail(calcBoardAvail()); }
+    function onResize(){ setBoardAvail(calcBoardAvail()); setQBoardPx(calcQBoardPx()); }
     window.addEventListener("resize",onResize);
     // ResizeObserver on boardRef gives accurate width for the board container,
     // avoiding the fixed-deduction approximation in practice mode.
@@ -1516,8 +1502,9 @@ function App(){
 
     // Default to full board if no bbox
     if(!bbox){
-      var maxW2=Math.max(60,boardAvail-2);
-      var s2=maxW2/raw;
+      var maxW2=Math.max(60,(props.maxW||boardAvail)-2);
+      var maxH2=props.maxH?Math.max(60,props.maxH-2):Infinity;
+      var s2=Math.min(maxW2/raw, maxH2/raw);
       var rest2={};
       Object.keys(props).forEach(function(k){ if(k!=="bbox") rest2[k]=props[k]; });
       return (
@@ -1581,8 +1568,9 @@ function App(){
 
     // Scaling: cap cell size at MAX_CELL_PX so small joseki crops don't upscale hugely
     var MAX_CELL_PX=60;
-    var maxW=Math.max(60,boardAvail-2);
-    var s=Math.min(maxW/visW, MAX_CELL_PX/CELL);
+    var maxW=Math.max(60,(props.maxW||boardAvail)-2);
+    var maxH=props.maxH?Math.max(60,props.maxH-2):Infinity;
+    var s=Math.min(maxW/visW, maxH/visH, MAX_CELL_PX/CELL);
     var bW=visW*s;
     var bH=visH*s;
 
@@ -1960,6 +1948,8 @@ function App(){
   const[qScore,setQScore]=useState({c:0,w:0});
   // Session-level scoring (persists across josekis within one practice session)
   const[qSession,setQSession]=useState({points:0,streak:0,totalC:0,totalW:0});
+  const[qScorePulse,setQScorePulse]=useState(false);
+  function triggerScorePulse(){ setQScorePulse(true); setTimeout(function(){ setQScorePulse(false); },500); }
   const[qPlayerColor,setQPlayerColor]=useState("B");
 
   function driveHandleAuthExpiry(){
@@ -2010,7 +2000,7 @@ function App(){
 
   function driveHandleConflict(token,file,driveData,isStartup){
     var driveTime=new Date(file.modifiedTime);
-    var localRaw=localStorage.getItem("joseki-lab-v10");
+    var localRaw=localStorage.getItem(STORAGE_KEY);
     var localParsed=localRaw?JSON.parse(localRaw):null;
     var localTime=localParsed&&localParsed.lastModified?new Date(localParsed.lastModified):new Date(0);
 
@@ -2018,7 +2008,7 @@ function App(){
       driveApplyData(driveData);
       var ts=new Date().toISOString();
       localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
-      try{ var lsD=JSON.parse(localStorage.getItem("joseki-lab-v10")||"{}"); lsD.lastModified=ts; localStorage.setItem("joseki-lab-v10",JSON.stringify(lsD)); }catch(ex){}
+      try{ var lsD=JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}"); lsD.lastModified=ts; localStorage.setItem(STORAGE_KEY,JSON.stringify(lsD)); }catch(ex){}
       setDriveStatus("idle");
     }
 
@@ -2286,7 +2276,6 @@ function App(){
   qPathRef.current=qPath;
 
   var qNode=qRoot?nodeAtPath(qRoot,qPath):null;
-  var qDepth=qRoot?depthAtPath(qRoot,qPath):0;
   var qNextColor=qRoot?turnAtPath(qRoot,qPath):"B";
   // qIsPlayer: true if the next move to be played belongs to the player.
   // We derive this from the actual color of the first child's move rather than
@@ -2552,7 +2541,7 @@ function App(){
           var mult=Math.min(1+newStreak*0.5,3);
           var pts=Math.round(10*mult);
           return {points:ss.points+pts, streak:newStreak, totalC:ss.totalC+1, totalW:ss.totalW};
-        });
+        }); triggerScorePulse();
         setQHint(false); setQWrongContinuations([]);
         setQPath(tenukiPath); setQStatus("waiting");
       } else {
@@ -2582,7 +2571,7 @@ function App(){
         var mult=Math.min(1+newStreak*0.5,3);
         var pts=Math.round(10*mult);
         return {points:ss.points+pts, streak:newStreak, totalC:ss.totalC+1, totalW:ss.totalW};
-      });
+      }); triggerScorePulse();
       setQOppTenuki(false);
       setQHint(false); setQWrongContinuations([]);
       // Advance path and let the opponent scheduling effect handle content/pause logic
@@ -2616,7 +2605,7 @@ function App(){
         var mult=Math.min(1+newStreak*0.5,3);
         var pts=Math.round(10*mult);
         return {points:ss.points+pts, streak:newStreak, totalC:ss.totalC+1, totalW:ss.totalW};
-      });
+      }); triggerScorePulse();
       setQHint(false); setQWrongContinuations([]); setQStatus("correct");
           setTimeout(function(){ setQStatus("waiting"); },500);
           switched=true;
@@ -2688,7 +2677,22 @@ function App(){
     *{box-sizing:border-box;margin:0;padding:0;}
     html,body{height:100%;overflow-x:hidden;}
     .app{min-height:100vh;background:var(--color-background-tertiary);font-family:'Noto Serif',serif;color:var(--color-text-primary);padding-bottom:calc(58px + env(safe-area-inset-bottom,8px));}
+    /* Practice mode two-column layout */
+    .qwrap{max-width:860px;margin:0 auto;}
+    .qgrid{display:flex;flex-direction:column;padding:1rem 1rem 1.5rem;}
+    .qside{display:none;}
+    @media(min-width:700px){
+      .qwrap{max-width:none;}
+      .qgrid{flex-direction:row;padding:0;height:calc(100vh - var(--topbar-h,56px) - calc(58px + env(safe-area-inset-bottom,0px)));}
+      .qboard-col{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;min-width:0;padding:0.75rem 0.5rem 0.75rem 1rem;}
+      .qside{display:flex;flex-direction:column;width:220px;flex-shrink:0;border-left:0.5px solid var(--color-border-tertiary);background:var(--color-background-secondary);overflow-y:scroll;padding:0.85rem 1rem;}
+      .qmobile{display:none;}
+    }
+
     .topbar{background:#1C1814;border-bottom:1px solid #3A2E20;padding:0.6rem 1rem;display:flex;align-items:center;gap:0.5rem;position:sticky;top:0;z-index:50;}
+    :root{--topbar-h:56px;}
+    @keyframes q-score-pulse{0%{transform:scale(1)}40%{transform:scale(1.04)}100%{transform:scale(1)}}
+    .q-score-pulse{animation:q-score-pulse 0.5s ease-out;}
     .logo{font-size:1.05rem;font-weight:600;letter-spacing:-0.02em;display:flex;align-items:center;gap:0.35rem;color:#C8BCA8;}
     .spacer{flex:1;}
     .con{max-width:860px;margin:0 auto;padding:1rem 1rem 1.5rem;}
@@ -2724,8 +2728,6 @@ function App(){
     .qs{font-size:0.9rem;font-weight:600;font-style:italic;min-height:1.4rem;}
     .qs.review{color:#8A7020;}
     .qs.correct{color:#C8A55A;}.qs.wrong{color:var(--color-text-danger);}.qs.done{color:#C8A55A;}.qs.waiting{color:var(--color-text-secondary);}
-    .pt{height:3px;background:var(--color-background-secondary);border-radius:2px;margin-bottom:1rem;overflow:hidden;}
-    .pf{height:100%;background:#C8A55A;border-radius:2px;transition:width 0.3s;}
     .tr{display:flex;align-items:center;gap:0.35rem;font-size:0.76rem;color:var(--color-text-secondary);margin:0.3rem 0;}
     .trow{display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;border-bottom:0.5px solid var(--color-border-tertiary);}
     .trow:last-child{border-bottom:none;}
@@ -3094,10 +3096,9 @@ function App(){
         </div>
       )}
 
-      {tab===TABS.quiz&&(
+      {tab===TABS.quiz&&!qEntry&&(
         <div className="con">
-          {!qEntry?(
-            <div>
+          <div>
               <p className="ptitle">Practice</p>
 
               <div className="card">
@@ -3124,7 +3125,7 @@ function App(){
                 </div>
                 <p className="sect">Display</p>
                 <div className="trow"><span className="tlbl">Show scoring</span><Toggle checked={qSettings.showScoring} onChange={function(v){ setSetting("showScoring",v); }}/></div>
-                <div className="trow"><span className="tlbl">Show position annotations<span style={{fontSize:"0.65rem",color:"var(--color-text-tertiary)",fontStyle:"italic",display:"block"}}>Disabling leads to faster play</span></span><Toggle checked={qSettings.showAnnotations} onChange={function(v){ setSetting("showAnnotations",v); }}/></div>
+                <div className="trow"><span className="tlbl">Show position annotations<span style={{fontSize:"0.65rem",color:"var(--color-text-tertiary)",fontStyle:"italic",display:"block"}}>Pauses between moves to show position comments and other annotations. Disabling leads to faster play.</span></span><Toggle checked={qSettings.showAnnotations} onChange={function(v){ setSetting("showAnnotations",v); }}/></div>
                 <div className="trow"><span className="tlbl">Always show full board</span><Toggle checked={qSettings.fullBoard} onChange={function(v){ setSetting("fullBoard",v); }}/></div>
               </div>
               {singlePracticeEntry&&(
@@ -3142,53 +3143,18 @@ function App(){
               </button>
 
             </div>
-          ):(
-            <div>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:"0.45rem",marginBottom:"0.65rem"}}>
-                <div>
-                  <div className={"qs "+qStatus}>
-                    {qStatus==="done"&&("Sequence complete: "+qScore.c+" correct, "+qScore.w+" wrong"+(qSettings.showScoring?(" -- "+qSession.points+" pts"):""))}
-                  </div>
-                </div>
-                <div style={{display:"flex",gap:"0.28rem",alignItems:"center",flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                  {qSettings.showScoring&&(
-                    <div style={{display:"flex",alignItems:"center",gap:"0.4rem"}}>
-                      <div style={{
-                        background:"linear-gradient(135deg,#C8A55A,#A88040)",
-                        borderRadius:"8px",padding:"0.18rem 0.6rem",
-                        display:"flex",alignItems:"baseline",gap:"0.2rem",
-                        boxShadow:"0 1px 6px rgba(200,165,90,0.4)"
-                      }}>
-                        <span style={{fontSize:"1.1rem",fontWeight:700,color:"#fff",fontFamily:"monospace",letterSpacing:"-0.02em"}}>{qSession.points}</span>
-                        <span style={{fontSize:"0.58rem",color:"rgba(255,255,255,0.8)",fontFamily:"monospace"}}>pts</span>
-                      </div>
-                      {qSession.streak>1&&(
-                        <div style={{
-                          background:"linear-gradient(135deg,#4A8870,#2E6058)",
-                          borderRadius:"8px",padding:"0.18rem 0.45rem",
-                          boxShadow:"0 1px 6px rgba(74,136,112,0.4)"
-                        }}>
-                          <span style={{fontSize:"0.78rem",fontWeight:700,color:"#fff",fontFamily:"monospace"}}>{"x"+Math.min(1+qSession.streak*0.5,3).toFixed(1)}</span>
-                        </div>
-                      )}
-                      <span style={{fontSize:"0.7rem",color:"var(--color-text-tertiary)",fontFamily:"monospace"}}>
-                        {qSession.totalC+qSession.totalW>0?(Math.round(100*qSession.totalC/(qSession.totalC+qSession.totalW))+"%"):"--"}
-                      </span>
-                    </div>
-                  )}
-                  <button className="btn btnxs" onClick={function(){ restartQuiz(); }}>Retry</button>
-                  <button className="btn btnxs" onClick={function(){
-                    var next=enabledEntries[Math.floor(Math.random()*enabledEntries.length)];
-                    setQSession(function(ss){ return ss; });
-                    startQuiz(next);
-                  }} disabled={enabledEntries.length<=1||qIsSingleEntry}>Random</button>
-                  <button className="btn btnxs" onClick={function(){ setQEntry(null); }}>X</button>
-                </div>
-              </div>
-              <div className="pt"><div className="pf" style={{width:(Math.min(qDepth/8,1)*100)+"%"}}/></div>
-              <div ref={boardRef} style={{width:"100%",marginBottom:"0.65rem"}}>
+          </div>
+        )}
+      {tab===TABS.quiz&&qEntry&&(
+        <div className="qwrap">
+          <div className="qgrid">
+            {/* Board column */}
+            <div className="qboard-col">
+              <div style={{marginBottom:"0.5rem"}}>
                 <div className="bshadow" style={{display:"inline-block"}}>
                   <CroppedBoard size={qEntry.boardSize}
+                    maxW={qBoardPx}
+                    maxH={qBoardPx}
                     bbox={qSettings.fullBoard?null:qFixedBbox}
                     stones={qStones}
                     onPlace={handleQuizBoardClick}
@@ -3202,87 +3168,152 @@ function App(){
                     noHover={!!qPendingOpp||qStatus==="wrong"||qStatus==="done"}/>
                 </div>
               </div>
-              <p style={{fontSize:"0.71rem",color:"var(--color-text-tertiary)",marginBottom:"0.55rem"}}>
-                Playing as {qPlayerColor==="B"?"Black":"White"}
-                {qSettings.playerRole==="random"?" (randomly assigned)":qSettings.playerRole==="player1"?" (Player 1)":" (Player 2)"}
-                {qStatus==="done"?" -- tap board for next":""}
-                
-              </p>
-
-              <div style={{display:"flex",gap:"0.3rem",flexWrap:"wrap",marginBottom:"0.65rem"}}>
-                <button className="btn btnsm"
-                  onClick={function(){ setQTreeModalPath(qPath); setQTreeModalOpen(true); setQTreeModalZoom(1); }}>
-                  Open Joseki Tree
-                </button>
-                {(qStatus==="waiting"&&qIsPlayer&&qNode&&qNode.children.length>0)&&(
-                  <button className="btn btnsm" onClick={function(){
-                    if(qHint){ setQHint(false); setQWrongContinuations([]); }
-                    else {
-                      setQWrongContinuations(buildWrongContinuations(qNode));
-                      setQHint(true);
-                    }
-                  }}>{qHint?"Hide hint":"Hint"}</button>
-                )}
-              {(qStatus==="waiting"&&qIsPlayer)&&(
-                  <button className="btn btnsm"
-                    onClick={function(){
-                      handleQuizBoardClick(-1,-1);
-                    }}>Tenuki</button>
-                )}
-
+              {/* Mobile-only info (hidden on desktop where side panel shows it) */}
+              <div className="qmobile">
+              {/* Joseki name + session controls */}
+              <div style={{marginBottom:"0.5rem"}}>
+                <div className={"qs "+qStatus} style={{marginBottom:"0.3rem"}}>
+                  {qStatus==="done"&&("Sequence complete: "+qScore.c+" correct, "+qScore.w+" wrong"+(qSettings.showScoring?(" -- "+qSession.points+" pts"):""))}
+                  {qStatus!=="done"&&<span style={{fontSize:"0.75rem",color:"var(--color-text-secondary)",fontStyle:"italic",lineHeight:1.45,display:"block"}}>{qEntry.name}</span>}
+                </div>
+                <div style={{display:"flex",gap:"0.28rem",alignItems:"center",flexWrap:"wrap"}}>
+                  <button className="btn btnxs" onClick={function(){ restartQuiz(); }}>Retry</button>
+                  <button className="btn btnxs" onClick={function(){
+                    var next=enabledEntries[Math.floor(Math.random()*enabledEntries.length)];
+                    setQSession(function(ss){ return ss; });
+                    startQuiz(next);
+                  }} disabled={enabledEntries.length<=1||qIsSingleEntry}>Random</button>
+                  <button className="btn btnxs" onClick={function(){ setQEntry(null); }}>X</button>
+                </div>
               </div>
-              {(qStatus==="wrong"&&qWrongIsTenuki)&&(
-                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
-                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
-                  color:"#7A5A10",lineHeight:1.5}}>
-                  Tenuki - the correct move is to play elsewhere. Tap the board to dismiss, then press <strong>Tenuki</strong> to continue.
+              {/* Score card — hidden when showScoring is off */}
+              {qSettings.showScoring&&(
+                <div className={qScorePulse?"q-score-pulse":""} style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"0.7rem 0.85rem",marginBottom:"0.5rem"}}>
+                  <div>
+                    <span style={{fontSize:"2rem",fontWeight:500,color:"var(--color-text-primary)",lineHeight:1,letterSpacing:"-0.03em",fontFamily:"monospace"}}>{qSession.points}</span>
+                    <span style={{fontSize:"0.65rem",color:"var(--color-text-tertiary)",marginLeft:3,fontFamily:"monospace"}}>pts</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+                    {qSession.streak>1&&(
+                      <span style={{background:"var(--color-background-success,#E1F5EE)",color:"var(--color-text-success,#085041)",borderRadius:4,fontSize:"0.7rem",fontWeight:500,padding:"2px 7px",fontFamily:"monospace"}}>{"×"+Math.min(1+qSession.streak*0.5,3).toFixed(1)+" streak"}</span>
+                    )}
+                    <span style={{fontSize:"0.72rem",color:"var(--color-text-tertiary)",fontFamily:"monospace"}}>
+                      {qSession.totalC+qSession.totalW>0?(qSession.totalC+"/"+(qSession.totalC+qSession.totalW)+" correct"):"--"}
+                    </span>
+                  </div>
+                  <div style={{marginTop:8,height:3,background:"var(--color-border-tertiary)",borderRadius:2}}>
+                    <div style={{height:"100%",background:"#1D9E75",borderRadius:2,transition:"width 0.4s ease",width:(qSession.totalC+qSession.totalW>0?(Math.round(100*qSession.totalC/(qSession.totalC+qSession.totalW)))+"%":"0%")}}></div>
+                  </div>
                 </div>
               )}
-              {qCorrectTenuki&&(
-                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
-                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
-                  color:"#7A5A10",lineHeight:1.5,fontWeight:600}}>
-                  Tenuki
+              {/* Playing as + action buttons */}
+              <div style={{marginBottom:"0.5rem"}}>
+                <p style={{fontSize:"0.71rem",color:"var(--color-text-tertiary)",marginBottom:"0.4rem"}}>
+                  Playing as {qPlayerColor==="B"?"Black":"White"}
+                  {qSettings.playerRole==="random"?" (randomly assigned)":qSettings.playerRole==="player1"?" (Player 1)":" (Player 2)"}
+                  {qStatus==="done"?" — tap board for next":""}
+                </p>
+                <div style={{display:"flex",gap:"0.3rem",flexWrap:"wrap"}}>
+                  <button className="btn btnsm" onClick={function(){ setQTreeModalPath(qPath); setQTreeModalOpen(true); setQTreeModalZoom(1); }}>Open Joseki Tree</button>
+                  {(qStatus==="waiting"&&qIsPlayer&&qNode&&qNode.children.length>0)&&(
+                    <button className="btn btnsm" onClick={function(){
+                      if(qHint){ setQHint(false); setQWrongContinuations([]); }
+                      else { setQWrongContinuations(buildWrongContinuations(qNode)); setQHint(true); }
+                    }}>{qHint?"Hide hint":"Hint"}</button>
+                  )}
+                  {(qStatus==="waiting"&&qIsPlayer)&&(
+                    <button className="btn btnsm" onClick={function(){ handleQuizBoardClick(-1,-1); }}>Tenuki</button>
+                  )}
                 </div>
-              )}
-              {(qStatus==="wrong"&&qWrongWasTenuki)&&(
-                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
-                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
-                  color:"#7A5A10",lineHeight:1.5}}>
-                  Tenuki is not the right move here - a local response is needed. Tap the board to see the correct continuation.
-                </div>
-              )}
-              {(qOppTenuki&&qStatus==="waiting")&&(
-                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
-                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
-                  color:"#7A5A10",lineHeight:1.5}}>
-                  Opponent tenuki.
-                </div>
-              )}
-              {(qPendingOpp&&qPendingOpp.move&&!qPendingOpp.move.pass)&&(
-                <div style={{fontSize:"0.78rem",color:"var(--color-text-tertiary)",
-                  fontStyle:"italic",marginBottom:"0.35rem",textAlign:"center"}}>
-                  Tap the board to continue
-                </div>
-              )}
-              {(qPendingOpp&&qPendingOpp.move&&qPendingOpp.move.pass)&&(
-                <div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,
-                  padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",
-                  color:"#7A5A10",lineHeight:1.5}}>
-                  Opponent tenuki - tap the board to confirm.
-                </div>
-              )}
+              </div>
+              {/* Status messages */}
+              {(qStatus==="wrong"&&qWrongIsTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki - the correct move is to play elsewhere. Tap the board to dismiss, then press <strong>Tenuki</strong> to continue.</div>)}
+              {qCorrectTenuki&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5,fontWeight:600}}>Tenuki</div>)}
+              {(qStatus==="wrong"&&qWrongWasTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki is not the right move here - a local response is needed. Tap the board to see the correct continuation.</div>)}
+              {(qOppTenuki&&qStatus==="waiting")&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Opponent tenuki.</div>)}
+              {(qPendingOpp&&qPendingOpp.move&&qPendingOpp.move.pass)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Opponent tenuki - tap the board to confirm.</div>)}
+              {/* Position note */}
               {(qSettings.showAnnotations&&qCurComment)&&(
                 <div className="card" style={{borderColor:"#b5a060",marginBottom:"0.55rem"}}>
                   <span className="lbl" style={{marginBottom:"0.22rem"}}>Position note</span>
-                  <p style={{fontSize:"0.79rem",fontStyle:"italic",color:"var(--color-text-secondary)",lineHeight:1.55}}>
-                    {renderComment(qCurComment)}
-                  </p>
+                  <p style={{fontSize:"0.79rem",fontStyle:"italic",color:"var(--color-text-secondary)",lineHeight:1.55}}>{renderComment(qCurComment)}</p>
                 </div>
               )}
-
+              </div>
             </div>
-          )}
+            {/* Desktop side panel */}
+            <div className="qside">
+              {/* Joseki name + session controls */}
+              <div style={{marginBottom:"0.5rem"}}>
+                <div className={"qs "+qStatus} style={{marginBottom:"0.3rem"}}>
+                  {qStatus==="done"&&("Sequence complete: "+qScore.c+" correct, "+qScore.w+" wrong"+(qSettings.showScoring?(" -- "+qSession.points+" pts"):""))}
+                  {qStatus!=="done"&&<span style={{fontSize:"0.75rem",color:"var(--color-text-secondary)",fontStyle:"italic",lineHeight:1.45,display:"block"}}>{qEntry.name}</span>}
+                </div>
+                <div style={{display:"flex",gap:"0.28rem",alignItems:"center",flexWrap:"wrap"}}>
+                  <button className="btn btnxs" onClick={function(){ restartQuiz(); }}>Retry</button>
+                  <button className="btn btnxs" onClick={function(){
+                    var next=enabledEntries[Math.floor(Math.random()*enabledEntries.length)];
+                    setQSession(function(ss){ return ss; });
+                    startQuiz(next);
+                  }} disabled={enabledEntries.length<=1||qIsSingleEntry}>Random</button>
+                  <button className="btn btnxs" onClick={function(){ setQEntry(null); }}>X</button>
+                </div>
+              </div>
+              {/* Score card — hidden when showScoring is off */}
+              {qSettings.showScoring&&(
+                <div className={qScorePulse?"q-score-pulse":""} style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"0.7rem 0.85rem",marginBottom:"0.5rem"}}>
+                  <div>
+                    <span style={{fontSize:"2rem",fontWeight:500,color:"var(--color-text-primary)",lineHeight:1,letterSpacing:"-0.03em",fontFamily:"monospace"}}>{qSession.points}</span>
+                    <span style={{fontSize:"0.65rem",color:"var(--color-text-tertiary)",marginLeft:3,fontFamily:"monospace"}}>pts</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+                    {qSession.streak>1&&(
+                      <span style={{background:"var(--color-background-success,#E1F5EE)",color:"var(--color-text-success,#085041)",borderRadius:4,fontSize:"0.7rem",fontWeight:500,padding:"2px 7px",fontFamily:"monospace"}}>{"×"+Math.min(1+qSession.streak*0.5,3).toFixed(1)+" streak"}</span>
+                    )}
+                    <span style={{fontSize:"0.72rem",color:"var(--color-text-tertiary)",fontFamily:"monospace"}}>
+                      {qSession.totalC+qSession.totalW>0?(qSession.totalC+"/"+(qSession.totalC+qSession.totalW)+" correct"):"--"}
+                    </span>
+                  </div>
+                  <div style={{marginTop:8,height:3,background:"var(--color-border-tertiary)",borderRadius:2}}>
+                    <div style={{height:"100%",background:"#1D9E75",borderRadius:2,transition:"width 0.4s ease",width:(qSession.totalC+qSession.totalW>0?(Math.round(100*qSession.totalC/(qSession.totalC+qSession.totalW)))+"%":"0%")}}></div>
+                  </div>
+                </div>
+              )}
+              {/* Playing as + action buttons */}
+              <div style={{marginBottom:"0.5rem"}}>
+                <p style={{fontSize:"0.71rem",color:"var(--color-text-tertiary)",marginBottom:"0.4rem"}}>
+                  Playing as {qPlayerColor==="B"?"Black":"White"}
+                  {qSettings.playerRole==="random"?" (randomly assigned)":qSettings.playerRole==="player1"?" (Player 1)":" (Player 2)"}
+                  {qStatus==="done"?" — tap board for next":""}
+                </p>
+                <div style={{display:"flex",gap:"0.3rem",flexWrap:"wrap"}}>
+                  <button className="btn btnsm" onClick={function(){ setQTreeModalPath(qPath); setQTreeModalOpen(true); setQTreeModalZoom(1); }}>Open Joseki Tree</button>
+                  {(qStatus==="waiting"&&qIsPlayer&&qNode&&qNode.children.length>0)&&(
+                    <button className="btn btnsm" onClick={function(){
+                      if(qHint){ setQHint(false); setQWrongContinuations([]); }
+                      else { setQWrongContinuations(buildWrongContinuations(qNode)); setQHint(true); }
+                    }}>{qHint?"Hide hint":"Hint"}</button>
+                  )}
+                  {(qStatus==="waiting"&&qIsPlayer)&&(
+                    <button className="btn btnsm" onClick={function(){ handleQuizBoardClick(-1,-1); }}>Tenuki</button>
+                  )}
+                </div>
+              </div>
+              {/* Status messages */}
+              {(qStatus==="wrong"&&qWrongIsTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki - the correct move is to play elsewhere. Tap the board to dismiss, then press <strong>Tenuki</strong> to continue.</div>)}
+              {qCorrectTenuki&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5,fontWeight:600}}>Tenuki</div>)}
+              {(qStatus==="wrong"&&qWrongWasTenuki)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Tenuki is not the right move here - a local response is needed. Tap the board to see the correct continuation.</div>)}
+              {(qOppTenuki&&qStatus==="waiting")&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Opponent tenuki.</div>)}
+              {(qPendingOpp&&qPendingOpp.move&&qPendingOpp.move.pass)&&(<div style={{background:"#FDF8ED",border:"1px solid #C8A55A",borderRadius:6,padding:"7px 10px",marginBottom:"0.5rem",fontSize:"0.82rem",color:"#7A5A10",lineHeight:1.5}}>Opponent tenuki - tap the board to confirm.</div>)}
+              {/* Position note */}
+              {(qSettings.showAnnotations&&qCurComment)&&(
+                <div className="card" style={{borderColor:"#b5a060",marginBottom:"0.55rem"}}>
+                  <span className="lbl" style={{marginBottom:"0.22rem"}}>Position note</span>
+                  <p style={{fontSize:"0.79rem",fontStyle:"italic",color:"var(--color-text-secondary)",lineHeight:1.55}}>{renderComment(qCurComment)}</p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -4129,7 +4160,7 @@ function App(){
                 setDriveConflict(null);
                 var ts=new Date().toISOString();
                 localStorage.setItem("joseki-drive-last-sync",ts); setDriveLastSync(ts);
-                try{ var lsD=JSON.parse(localStorage.getItem("joseki-lab-v10")||"{}"); lsD.lastModified=ts; localStorage.setItem("joseki-lab-v10",JSON.stringify(lsD)); }catch(ex){}
+                try{ var lsD=JSON.parse(localStorage.getItem(STORAGE_KEY)||"{}"); lsD.lastModified=ts; localStorage.setItem(STORAGE_KEY,JSON.stringify(lsD)); }catch(ex){}
               }}>Use Google Drive</button>
             </div>
           </div>
