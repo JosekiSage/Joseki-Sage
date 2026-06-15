@@ -10,7 +10,7 @@
   <meta name="description" content="Joseki Sage — a free Go/Baduk/Weiqi joseki trainer. Build a personal joseki library, study sequences in an interactive editor, and test your recall in practice mode."/>
   <meta name="keywords" content="Go, Baduk, Weiqi, joseki, joseki trainer, joseki practice, joseki study, Go opening, Go patterns, stone patterns, Go game, Baduk trainer, Weiqi trainer"/>
   <meta property="og:title" content="Joseki Sage — Go / Baduk / Weiqi Joseki Trainer"/>
-  <meta property="og:description" content="A free browser-based joseki trainer for Go/Baduk/Weiqi. Study and practice joseki sequences with an interactive editor and quiz mode."/>
+  <meta property="og:description" content="A free browser-based joseki trainer for Go/Baduk/Weiqi. Study and practice joseki sequences with an interactive editor and practice mode."/>
   <meta property="og:url" content="https://josekisage.com"/>
   <meta property="og:type" content="website"/>
   <script type="application/ld+json">
@@ -19,7 +19,7 @@
     "@type": "WebApplication",
     "name": "Joseki Sage",
     "url": "https://josekisage.com",
-    "description": "A free browser-based joseki trainer for Go, Baduk, and Weiqi. Build a personal joseki library, study and practice sequences with an interactive editor and quiz mode.",
+    "description": "A free browser-based joseki trainer for Go, Baduk, and Weiqi. Build a personal joseki library, study and practice sequences with an interactive editor and practice mode.",
     "applicationCategory": "GameApplication",
     "operatingSystem": "Any",
     "offers": {
@@ -101,7 +101,7 @@ html, body { height: 100%; background: #F8F4EE; }
     <noscript><p style="color:#8B3020;">JavaScript is required to run Joseki Sage.</p></noscript>
     <div style="max-width:340px;font-size:0.8rem;color:#9B8A70;line-height:1.6;">
       <h2 style="font-size:0.9rem;font-weight:600;color:#6B5A40;margin-bottom:0.5rem;">Free joseki trainer for Go/Baduk/Weiqi</h2>
-      <p>Create sequences with an interactive board editor, build a personal joseki library, drill variations in quiz mode, and sync your progress with Google Drive.</p>
+      <p>Create sequences with an interactive board editor, build a personal joseki library, drill variations in practice mode, and sync your progress with Google Drive.</p>
     </div>
   </div>
 </div></div>
@@ -3070,7 +3070,7 @@ function App(){
             <p className="ptitle" style={{margin:0}}>Joseki Library</p>
             <button className="btn btnp btnsm" onClick={function(){ openEditor(null); }}>+ New</button>
           </div>
-          <p className="psub">Toggle On/Off to include in quiz pool.</p>
+          <p className="psub">Toggle On/Off to include in the practice pool.</p>
           <div style={{marginBottom:"0.65rem",position:"relative"}}>
             <input className="inp" style={{marginBottom:0,paddingLeft:"2rem"}}
               placeholder="Search joseki and folders..."
@@ -3149,7 +3149,7 @@ function App(){
 
               <div className="card">
                 <p className="sect">Transformations</p>
-<div className="trow"><span className="tlbl">Randomly mirror each quiz</span><Toggle checked={qSettings.mirrorRandom} onChange={function(v){ setSetting("mirrorRandom",v); }}/></div>
+<div className="trow"><span className="tlbl">Randomly mirror each session</span><Toggle checked={qSettings.mirrorRandom} onChange={function(v){ setSetting("mirrorRandom",v); }}/></div>
                 <div className="trow"><span className="tlbl">Randomly invert colors</span><Toggle checked={qSettings.invertRandom} onChange={function(v){ setSetting("invertRandom",v); }}/></div>
                 <div className="trow">
                   <span className="tlbl">Start from random node<span style={{fontSize:"0.65rem",color:"var(--color-text-tertiary)",fontStyle:"italic",display:"block"}}>Begins the selected joseki from a random position within its tree</span></span>
@@ -3999,7 +3999,7 @@ function App(){
             <p className="sect">Offline & Installing as an App</p>
             <div style={{fontSize:"0.88rem",lineHeight:1.7,color:"var(--color-text-secondary)"}}>
               <p style={{marginBottom:"0.6rem"}}>
-                Joseki Sage works offline on all platforms — mobile and desktop — after your first visit. The app uses a service worker to cache itself in your browser automatically. Once cached, it loads and runs fully with no internet connection. Your library data is stored locally in your browser and is always available offline.
+                Joseki Sage works offline on all platforms — mobile and desktop — after your first visit. The app uses a service worker to cache itself in your browser automatically. Once cached, it loads and runs fully with no internet connection. Your library data is stored locally in your browser and is always available offline. The app can also be downloaded and run directly from the <a href="https://github.com/JosekiSage/Joseki-Sage" target="_blank" rel="noopener noreferrer" style={{color:"var(--color-text-link,#4A8870)"}}>GitHub repository</a>, including the default library and all other files.
               </p>
               <p style={{marginBottom:"0.6rem"}}>
                 Joseki Sage can also be installed as a Progressive Web App (PWA) for a native app-like experience with its own icon and window. Installing is optional — the app works fully in the browser with or without installation, including offline.
@@ -4097,14 +4097,17 @@ function App(){
                     <P><B>Practicing a single joseki:</B> Tap a joseki name to open it, then tap Practice.</P>
                     <P><B>Editing a joseki:</B> Tap a joseki name to open it, then tap Edit.</P>
                     <P><B>Deleting a joseki:</B> Open the joseki and tap Delete. This cannot be undone.</P>
+                    <H2>Practice Statistics</H2>
+                    <P>Once you have completed at least one practice session for a joseki, the library card shows three statistics: the number of sessions completed, your accuracy as a percentage of correct moves, and the date last practiced. Tap <B>Reset</B> on the card to clear the statistics for that joseki.</P>
+                    <P>Practice statistics are stored locally and synced to Google Drive alongside your custom library. They are not included in manual library exports or imports.</P>
                     <H2>Importing and Exporting</H2>
-                    <P>Use the <B>Download</B> and <B>Import</B> buttons in the top bar to back up or restore your library. Files are named JS-Custom-Library.json or JS-Default-Library.json. A copy of the default library is available at the GitHub repository.</P>
+                    <P>Use the <B>Download</B> and <B>Import</B> buttons in the top bar to back up or restore your library. Files are named JS-Custom-Library.json or JS-Default-Library.json. A copy of the default library is available at the <a href="https://github.com/JosekiSage/Joseki-Sage" target="_blank" rel="noopener noreferrer">GitHub repository</a>.</P>
                     <P>Importing completely replaces the existing library — export a backup first. To transfer between devices without Google Drive, export on the source, transfer the file, and import on the target.</P>
                     <H2>Google Drive Sync</H2>
                     <P>Tap the <B>Drive</B> button in the top bar and select <B>Connect Google Drive</B> to sync your custom library automatically across all devices and browsers. Sign in and grant permission — the app can only access a single file it creates and cannot see anything else in your Drive.</P>
                     <P>Once connected, your library saves to Drive automatically a few seconds after any change and is fetched silently on startup. If Drive has newer data it updates automatically; if both devices have data you will be asked which version to use.</P>
                     <P>The Drive button shows the last sync time when connected, "Drive…" while syncing, and a red indicator on error. Tap it and select <B>Reconnect</B> if your session has expired (sessions last approximately one hour). Selecting <B>Disconnect</B> removes the connection from this device but does not delete your Drive data.</P>
-                    <P>Only the Custom Library is synced. The Default Library and enabled/disabled toggle states for Default joseki are stored locally only. Google Drive sync requires an internet connection.</P>
+                    <P>The Custom Library and practice statistics for all joseki (including Default) are synced to Drive. The Default Library itself and enabled/disabled toggle states for Default joseki are stored locally only. Google Drive sync requires an internet connection.</P>
                   </div>
                 );
 
