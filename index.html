@@ -900,11 +900,9 @@ function GoBoard(props){
     var hr=hover.r, hc=hover.c;
     if(hoverMode==="letter"&&!stones[sk(hr,hc)]){
       var hoverLabel=props.hoverLabel||"A";
-      hoverEl=<g opacity="0.5">
-        <circle cx={cx(hc)} cy={cy(hr)} r={CELL*0.43} fill="rgba(74,136,112,0.18)" stroke="rgba(74,136,112,0.55)" strokeWidth="0.8"/>
-        <text x={cx(hc)} y={cy(hr)} textAnchor="middle" dominantBaseline="central"
-          fontSize={CELL*0.48} fontFamily="monospace" fontWeight="bold" fill="rgba(74,136,112,0.9)">{hoverLabel}</text>
-      </g>;
+      hoverEl=<text x={cx(hc)} y={cy(hr)} textAnchor="middle" dominantBaseline="central"
+        fontSize={CELL*0.52} fontFamily="monospace" fontWeight="bold"
+        fill="rgba(60,50,40,0.55)">{hoverLabel}</text>;
     } else if(hoverMode==="triangle"){
       var stEntry=stones[sk(hr,hc)];
       var triColor=stEntry&&stEntry.color==="B"?"rgba(200,200,200,0.7)":"rgba(60,60,60,0.7)";
