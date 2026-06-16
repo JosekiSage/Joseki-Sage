@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#1C1814"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
@@ -44,9 +44,9 @@
     }
   </script>
   <title>Joseki Sage — Go / Baduk / Weiqi Joseki Trainer</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" as="script" crossorigin="anonymous"/>
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" as="script" crossorigin="anonymous"/>
+<link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js" as="script" crossorigin="anonymous"/>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
 <style>
@@ -106,6 +106,9 @@ html, body { height: 100%; background: #F8F4EE; }
     </div>
   </div>
 </div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="text/babel">
 const { useState, useEffect, useRef, useMemo } = React;
 
@@ -891,11 +894,30 @@ function GoBoard(props){
     }
   }
 
+  var hoverMode=props.hoverMode||"stone";
   var hoverEl=null;
-  if(!readOnly&&!noHover&&hover&&!stones[sk(hover.r,hover.c)]){
-    hoverEl=<circle cx={cx(hover.c)} cy={cy(hover.r)} r={CELL*0.43}
-      fill={nextColor==="B"?"rgba(0,0,0,0.22)":"rgba(255,255,255,0.42)"}
-      stroke={nextColor==="B"?"rgba(0,0,0,0.45)":"rgba(180,180,180,0.7)"} strokeWidth="0.8"/>;
+  if(!readOnly&&!noHover&&hover){
+    var hr=hover.r, hc=hover.c;
+    if(hoverMode==="letter"&&!stones[sk(hr,hc)]){
+      var hoverLabel=props.hoverLabel||"A";
+      hoverEl=<g opacity="0.5">
+        <circle cx={cx(hc)} cy={cy(hr)} r={CELL*0.43} fill="rgba(74,136,112,0.18)" stroke="rgba(74,136,112,0.55)" strokeWidth="0.8"/>
+        <text x={cx(hc)} y={cy(hr)} textAnchor="middle" dominantBaseline="central"
+          fontSize={CELL*0.48} fontFamily="monospace" fontWeight="bold" fill="rgba(74,136,112,0.9)">{hoverLabel}</text>
+      </g>;
+    } else if(hoverMode==="triangle"){
+      var stEntry=stones[sk(hr,hc)];
+      var triColor=stEntry&&stEntry.color==="B"?"rgba(200,200,200,0.7)":"rgba(60,60,60,0.7)";
+      var tp1=cx(hc)+","+( cy(hr)-CELL*0.32);
+      var tp2=(cx(hc)-CELL*0.29)+","+(cy(hr)+CELL*0.20);
+      var tp3=(cx(hc)+CELL*0.29)+","+(cy(hr)+CELL*0.20);
+      hoverEl=<polygon opacity="0.6" points={tp1+" "+tp2+" "+tp3}
+        fill="none" stroke={triColor} strokeWidth="1.5"/>;
+    } else if(hoverMode==="stone"&&!stones[sk(hr,hc)]){
+      hoverEl=<circle cx={cx(hc)} cy={cy(hr)} r={CELL*0.43}
+        fill={nextColor==="B"?"rgba(0,0,0,0.22)":"rgba(255,255,255,0.42)"}
+        stroke={nextColor==="B"?"rgba(0,0,0,0.45)":"rgba(180,180,180,0.7)"} strokeWidth="0.8"/>;
+    }
   }
 
   var wrongEl=null;
@@ -1750,7 +1772,7 @@ function App(){
     setDeleteSubtreeConfirm(false);
     // If navigating away from root, switch off setup tools
     if(path.length>0){
-      setEditTool(function(t){ return (t==="setup-B"||t==="setup-W")?"stone":t; });
+      setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; });
     }
   }
 
@@ -1764,7 +1786,7 @@ function App(){
       var nn=makeNode({r:r,c:c,color:editTurn});
       var newLen=editNode.children.length;
       setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
-      setEditPath(function(p){ return p.concat(newLen); });
+      setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
     } else if(editTool==="setup-B"||editTool==="setup-W"){
       var color=editTool==="setup-B"?"B":"W";
       // Block if point has a numbered move stone
@@ -1811,7 +1833,7 @@ function App(){
         var nn=makeSetupNode(added2,removed2);
         var newLen=editNode.children.length;
         setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
-        setEditPath(function(p){ return p.concat(newLen); });
+        setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
       }
     } else if(editTool==="letter"){
       if(letterCount>=26) return;
@@ -1848,20 +1870,20 @@ function App(){
     } else {
       if(!editNode) return;
       var existing=editNode.children.findIndex(function(ch){ return ch.move&&ch.move.pass&&ch.move.color===editTurn; });
-      if(existing!==-1){ setEditPath(function(p){ return p.concat(existing); }); return; }
+      if(existing!==-1){ setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(existing); }); return; }
       var nn=makeNode({pass:true,color:editTurn});
       var newLen=editNode.children.length;
       setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
-      setEditPath(function(p){ return p.concat(newLen); });
+      setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
     }
   }
 
-  function handleBack(){ if(editPath.length>0) setEditPath(function(p){ return p.slice(0,-1); }); }
+  function handleBack(){ if(editPath.length>0){ setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.slice(0,-1); }); } }
   function handleUndoLeaf(){
     if(!editPath.length||!editNode||editNode.children.length) return;
     var pp=editPath.slice(0,-1), idx=editPath[editPath.length-1];
     setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,pp).children.splice(idx,1); return cl; });
-    setEditPath(pp);
+    setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(pp);
   }
   const[deleteSubtreeConfirm,setDeleteSubtreeConfirm]=useState(false);
   function handleDeleteSubtree(){
@@ -1870,7 +1892,7 @@ function App(){
     setDeleteSubtreeConfirm(false);
     var pp=editPath.slice(0,-1), idx=editPath[editPath.length-1];
     setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,pp).children.splice(idx,1); return cl; });
-    setEditPath(pp);
+    setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(pp);
   }
   function handleFlagNode(){
     setEditRoot(function(prev){
@@ -2696,8 +2718,12 @@ function App(){
   }
 
   var css=`
-    *{box-sizing:border-box;margin:0;padding:0;}
-    html,body{height:100%;overflow-x:hidden;}
+    *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+    html,body{height:100%;overflow-x:hidden;overscroll-behavior:none;}
+    /* Active state feedback for all interactive elements */
+    button:active,.btn:active,.bottab:active,.tbtn:active,.trow:active{opacity:0.72;transform:scale(0.97);transition:opacity 0.08s,transform 0.08s;}
+    /* Momentum scrolling for scrollable containers */
+    .con,.qside,.qmobile{-webkit-overflow-scrolling:touch;}
     .app{min-height:100vh;background:var(--color-background-tertiary);font-family:'Noto Serif',serif;color:var(--color-text-primary);padding-bottom:calc(58px + env(safe-area-inset-bottom,8px));}
     /* Practice mode two-column layout */
     .qwrap{max-width:860px;margin:0 auto;}
@@ -2717,7 +2743,7 @@ function App(){
     .q-score-pulse{animation:q-score-pulse 0.5s ease-out;}
     .logo{font-size:1.05rem;font-weight:600;letter-spacing:-0.02em;display:flex;align-items:center;gap:0.35rem;color:#C8BCA8;}
     .spacer{flex:1;}
-    .con{max-width:860px;margin:0 auto;padding:1rem 1rem 1.5rem;}
+    .con{max-width:860px;margin:0 auto;padding:1rem 1rem 1.5rem;overscroll-behavior:contain;}
     .ptitle{font-size:1.2rem;font-weight:600;letter-spacing:-0.02em;margin-bottom:0.2rem;}
     .psub{font-size:0.82rem;color:var(--color-text-secondary);font-style:italic;margin-bottom:1.1rem;}
     .btn{border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);padding:0.34rem 0.78rem;font-size:0.79rem;font-family:'Noto Serif',serif;color:var(--color-text-primary);cursor:pointer;background:transparent;transition:background 0.12s;}
@@ -2725,10 +2751,10 @@ function App(){
     .btn:active{opacity:0.7;}.btn:disabled{opacity:0.33;cursor:default;}
     .btnp{background:#4A8870;color:#fff;border-color:#2E6058;}.btnp:hover{background:#2E6058;}
     .btnd{color:var(--color-text-danger);border-color:var(--color-border-danger);}.btnd:hover{background:var(--color-background-danger);}
-    .btnsm{padding:0.24rem 0.58rem;font-size:0.74rem;}
-    .btnxs{padding:0.14rem 0.42rem;font-size:0.69rem;}
+    .btnsm{padding:0.38rem 0.58rem;font-size:0.74rem;min-height:32px;}
+    .btnxs{padding:0.28rem 0.42rem;font-size:0.69rem;min-height:28px;}
     .brow{display:flex;gap:0.28rem;flex-wrap:wrap;}
-    .inp{width:100%;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);padding:0.4rem 0.62rem;font-size:0.85rem;font-family:'Noto Serif',serif;background:var(--color-background-primary);color:var(--color-text-primary);outline:none;margin-bottom:0.52rem;}
+    .inp{width:100%;border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);padding:0.4rem 0.62rem;font-size:1rem;font-family:'Noto Serif',serif;background:var(--color-background-primary);color:var(--color-text-primary);outline:none;margin-bottom:0.52rem;}
     .inp:focus{border-color:#C8A55A;}
     .ta{resize:vertical;min-height:54px;}
     .lbl{font-size:0.66rem;font-family:monospace;letter-spacing:0.1em;text-transform:uppercase;color:var(--color-text-tertiary);margin-bottom:0.38rem;display:block;}
@@ -2764,7 +2790,7 @@ function App(){
     .sgfp{background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:0.65rem;margin-bottom:0.5rem;}
     .sect{font-size:0.72rem;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--color-text-secondary);margin:0.65rem 0 0.35rem;}
     .botnav{position:fixed;bottom:0;left:0;right:0;background:var(--color-background-secondary);border-top:0.5px solid var(--color-border-secondary);display:flex;z-index:50;padding-bottom:env(safe-area-inset-bottom,0px);}
-    .bottab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0.48rem 0.2rem;font-size:0.68rem;font-family:'Noto Serif',serif;color:var(--color-text-tertiary);cursor:pointer;border:none;background:transparent;gap:0.18rem;}
+    .bottab{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0.55rem 0.2rem;font-size:0.68rem;font-family:'Noto Serif',serif;color:var(--color-text-tertiary);cursor:pointer;border:none;background:transparent;gap:0.18rem;min-height:48px;}
     .bottab.on{color:#4A8870;font-weight:600;}
     .bottab svg{width:19px;height:19px;}
     select{border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);padding:0.28rem 0.46rem;background:var(--color-background-primary);color:var(--color-text-primary);font-family:'Noto Serif',serif;font-size:0.8rem;cursor:pointer;}
@@ -3488,7 +3514,7 @@ function App(){
                 var btnBorder=isActive?(isBlack?"#6BAA8E":"#4A8870"):(isBlack?"#3A2E20":"#8B7A60");
                 var btnOutline=isActive?("2px solid "+(isBlack?"#6BAA8E":"#4A8870")):"none";
                 return <button key={i} className="tbtn" style={{background:btnBg,color:btnColor,borderColor:btnBorder,outline:btnOutline,outlineOffset:"1px"}}
-                  onClick={function(){ setEditPath(function(p){ return p.concat(i); }); }}>{lbl}</button>;
+                  onClick={function(){ setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(i); }); }}>{lbl}</button>;
               })}
             </div>
           )}
@@ -3503,6 +3529,8 @@ function App(){
                   annotations={editAnnotations}
                   showNumbers={true}
                   nextColor={(editTool==="setup-B")?"B":(editTool==="setup-W")?"W":editTurn}
+                  hoverMode={(editTool==="letter"||editTool==="triangle")?editTool:"stone"}
+                  hoverLabel={letterCount<26?ALPHA[letterCount]:""}
                   viewMode={editView} viewRot={editViewRot}/>
               </div>
               <div className="tr">
