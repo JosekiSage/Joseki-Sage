@@ -2396,9 +2396,6 @@ function App(){
       (resolvedNode.comment&&resolvedNode.comment.trim().length>0)||
       (resolvedNode.annotations&&resolvedNode.annotations.some(function(a){ return a.type==="letter"||a.type==="triangle"; }))
     );
-    // Step 2b: if the current node has content and it's the opponent's turn,
-    // fall through to Step 4 — the opponent auto-plays and the note is shown after.
-
     // Step 3: If player's turn, wait for input
     if(isPlayerTurn){ setQPendingOpp(null); return; }
 
@@ -2410,8 +2407,16 @@ function App(){
     var pick=oppKids[Math.floor(Math.random()*oppKids.length)];
     var child=pick.ch; var idx=pick.i;
 
-    // Always auto-play the opponent's move — never show a ghost stone.
-    // Position notes on the opponent's node will be shown after the move plays.
+    // If the current node has content (comment/annotations) and showAnnotations is on,
+    // pause here so the player can read before the opponent plays.
+    // qPendingOpp holds the pending move; any tap on the board advances it.
+    // No ghost stone is shown — the comment panel is the signal to the player.
+    if(currentNodeHasContent&&!qPendingOpp){
+      setQPendingOpp({move:child.move,childIdx:idx});
+      return;
+    }
+
+    // Auto-play the opponent's move after a short delay.
     var oppMove=child.move;
     setTimeout(function(){
       if(!oppMove.pass){
@@ -2696,10 +2701,12 @@ function App(){
   var unfoldered=visibleEntries.filter(function(e){ return !e.folderId; });
 
   function Toggle(props){
+    // Using a plain div with onClick rather than a controlled checkbox inside a label
+    // avoids the double-fire issue on mobile where label click + input change both fire.
     return (
-      <label style={{position:"relative",display:"inline-block",width:34,height:19,flexShrink:0}}>
-        <input type="checkbox" checked={props.checked} onChange={function(e){ props.onChange(e.target.checked); }}
-          style={{opacity:0,width:0,height:0}}/>
+      <div role="switch" aria-checked={props.checked}
+        onClick={function(){ props.onChange(!props.checked); }}
+        style={{position:"relative",display:"inline-block",width:34,height:19,flexShrink:0,cursor:"pointer",WebkitTapHighlightColor:"transparent",touchAction:"manipulation"}}>
         <span style={{
           position:"absolute",cursor:"pointer",inset:0,
           background:props.checked?"#4A8870":"#ccc",
@@ -2711,7 +2718,7 @@ function App(){
             background:"white",borderRadius:"50%",transition:"0.18s"
           }}/>
         </span>
-      </label>
+      </div>
     );
   }
 
@@ -2719,7 +2726,7 @@ function App(){
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
     html,body{height:100%;overflow-x:hidden;overscroll-behavior:none;}
     /* Active state feedback for all interactive elements */
-    button:active,.btn:active,.bottab:active,.tbtn:active,.trow:active{opacity:0.72;transform:scale(0.97);transition:opacity 0.08s,transform 0.08s;}
+    button:active,.btn:active,.bottab:active,.tbtn:active{opacity:0.72;transform:scale(0.97);transition:opacity 0.08s,transform 0.08s;}
     /* Momentum scrolling for scrollable containers */
     .con,.qside,.qmobile{-webkit-overflow-scrolling:touch;}
     .app{min-height:100vh;background:var(--color-background-tertiary);font-family:'Noto Serif',serif;color:var(--color-text-primary);padding-bottom:calc(58px + env(safe-area-inset-bottom,8px));}
@@ -3235,7 +3242,8 @@ function App(){
                     showCoords={true}
                     annotations={qAnnotations}
                     nextColor={qNextMoveColor}
-                    noHover={qStatus==="wrong"||qStatus==="done"}/>
+                    pendingStone={(qPendingOpp&&!qPendingOpp.move.pass)?qPendingOpp.move:null}
+                    noHover={qStatus==="wrong"||qStatus==="done"||(!!qPendingOpp&&!qPendingOpp.move.pass)}/>
                 </div>
               </div>
               {/* Mobile-only info (hidden on desktop where side panel shows it) */}
@@ -3281,7 +3289,7 @@ function App(){
                 <p style={{fontSize:"0.71rem",color:"var(--color-text-tertiary)",marginBottom:"0.4rem"}}>
                   Playing as {qPlayerColor==="B"?"Black":"White"}
                   {qSettings.playerRole==="random"?" (randomly assigned)":qSettings.playerRole==="player1"?" (Player 1)":" (Player 2)"}
-                  {qStatus==="done"?" — tap board for next":""}
+                  {qStatus==="done"?" — tap board for next":(qPendingOpp&&!qPendingOpp.move.pass)?" — tap board to continue":""}
                 </p>
                 <div style={{display:"flex",gap:"0.3rem",flexWrap:"wrap"}}>
                   <button className="btn btnsm" onClick={function(){ setQTreeModalPath(qPath); setQTreeModalOpen(true); setQTreeModalZoom(1); }}>Open Joseki Tree</button>
@@ -3354,7 +3362,7 @@ function App(){
                 <p style={{fontSize:"0.71rem",color:"var(--color-text-tertiary)",marginBottom:"0.4rem"}}>
                   Playing as {qPlayerColor==="B"?"Black":"White"}
                   {qSettings.playerRole==="random"?" (randomly assigned)":qSettings.playerRole==="player1"?" (Player 1)":" (Player 2)"}
-                  {qStatus==="done"?" — tap board for next":""}
+                  {qStatus==="done"?" — tap board for next":(qPendingOpp&&!qPendingOpp.move.pass)?" — tap board to continue":""}
                 </p>
                 <div style={{display:"flex",gap:"0.3rem",flexWrap:"wrap"}}>
                   <button className="btn btnsm" onClick={function(){ setQTreeModalPath(qPath); setQTreeModalOpen(true); setQTreeModalZoom(1); }}>Open Joseki Tree</button>
