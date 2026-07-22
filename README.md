@@ -2,7 +2,7 @@
 
 A browser-based Go joseki training application.
 
-Live app: [**josekisage.github.io/Joseki-Sage**](https://josekisage.github.io/Joseki-Sage/)
+Live app: [**josekisage.com**](https://www.josekisage.com)
 
 ---
 
