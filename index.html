@@ -1128,6 +1128,8 @@ function App(){
   function bumpSync(){ setSyncVersion(function(v){ return v+1; }); }
   const[fetching,setFetching]=useState(false);
   const[tab,setTab]=useState(TABS.library);
+  const[editDirty,setEditDirty]=useState(false);
+  const[pendingNavAction,setPendingNavAction]=useState(null);
   const[searchQuery,setSearchQuery]=useState("");
   const[showHelp,setShowHelp]=useState(false);
   const[driveToken,setDriveToken]=useState(function(){ return localStorage.getItem("joseki-drive-token")||null; });
@@ -1753,6 +1755,7 @@ function App(){
   var letterCount=(editAnnotations||[]).filter(function(a){ return a.type==="letter"; }).length;
 
   function openEditor(entry){
+    setEditDirty(false);
     if(entry){
       setEditId(entry.id); setEditName(entry.name); setEditNotes(entry.notes||"");
       setEditSize(entry.boardSize); setEditRoot(deepClone(entry.root));
@@ -1783,7 +1786,7 @@ function App(){
       if(editStones[key]) return;
       var nn=makeNode({r:r,c:c,color:editTurn});
       var newLen=editNode.children.length;
-      setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
+      setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
       setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
     } else if(editTool==="setup-B"||editTool==="setup-W"){
       var color=editTool==="setup-B"?"B":"W";
@@ -1794,7 +1797,7 @@ function App(){
       var isReplacingOpposite=!isRemoving&&existingStone&&existingStone.color!==color;
       if(editPath.length===0){
         // Root node: modify setupStones directly (existing behaviour)
-        setEditRoot(function(prev){
+        setEditDirty(true); setEditRoot(function(prev){
           var cl=deepClone(prev);
           if(isRemoving) delete cl.setupStones[key];
           else cl.setupStones[key]=color;
@@ -1802,7 +1805,7 @@ function App(){
         });
       } else if(editNode.type==="setup"){
         // Already in a setup node: modify its deltas in place
-        setEditRoot(function(prev){
+        setEditDirty(true); setEditRoot(function(prev){
           var cl=deepClone(prev);
           var n=nodeAtPath(cl,editPath);
           if(isRemoving){
@@ -1830,12 +1833,12 @@ function App(){
         var removed2=isRemoving?[{r:r,c:c}]:(isReplacingOpposite?[{r:r,c:c}]:[]);
         var nn=makeSetupNode(added2,removed2);
         var newLen=editNode.children.length;
-        setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
+        setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
         setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
       }
     } else if(editTool==="letter"){
       if(letterCount>=26) return;
-      setEditRoot(function(prev){
+      setEditDirty(true); setEditRoot(function(prev){
         var cl=deepClone(prev); var n=nodeAtPath(cl,editPath);
         var ei=n.annotations.findIndex(function(a){ return a.r===r&&a.c===c; });
         if(ei!==-1){
@@ -1851,7 +1854,7 @@ function App(){
         return cl;
       });
     } else if(editTool==="triangle"){
-      setEditRoot(function(prev){
+      setEditDirty(true); setEditRoot(function(prev){
         var cl=deepClone(prev); var n=nodeAtPath(cl,editPath);
         var ei=n.annotations.findIndex(function(a){ return a.r===r&&a.c===c; });
         if(ei!==-1) n.annotations.splice(ei,1);
@@ -1863,7 +1866,7 @@ function App(){
 
   function handlePass(){
     if(editTool==="setup-B"||editTool==="setup-W"){
-      setEditRoot(function(prev){ var cl=deepClone(prev); cl.colorOffset=(cl.colorOffset||0)^1; return cl; });
+      setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); cl.colorOffset=(cl.colorOffset||0)^1; return cl; });
       setEditTool(function(t){ return t==="setup-B"?"setup-W":"setup-B"; });
     } else {
       if(!editNode) return;
@@ -1871,7 +1874,7 @@ function App(){
       if(existing!==-1){ setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(existing); }); return; }
       var nn=makeNode({pass:true,color:editTurn});
       var newLen=editNode.children.length;
-      setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
+      setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
       setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
     }
   }
@@ -1880,7 +1883,7 @@ function App(){
   function handleUndoLeaf(){
     if(!editPath.length||!editNode||editNode.children.length) return;
     var pp=editPath.slice(0,-1), idx=editPath[editPath.length-1];
-    setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,pp).children.splice(idx,1); return cl; });
+    setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,pp).children.splice(idx,1); return cl; });
     setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(pp);
   }
   const[deleteSubtreeConfirm,setDeleteSubtreeConfirm]=useState(false);
@@ -1889,11 +1892,11 @@ function App(){
     if(!deleteSubtreeConfirm){ setDeleteSubtreeConfirm(true); return; }
     setDeleteSubtreeConfirm(false);
     var pp=editPath.slice(0,-1), idx=editPath[editPath.length-1];
-    setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,pp).children.splice(idx,1); return cl; });
+    setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,pp).children.splice(idx,1); return cl; });
     setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(pp);
   }
   function handleFlagNode(){
-    setEditRoot(function(prev){
+    setEditDirty(true); setEditRoot(function(prev){
       var cl=deepClone(prev);
       var n=nodeAtPath(cl,editPath);
       if(n) n.flagged=!n.flagged;
@@ -1901,7 +1904,7 @@ function App(){
     });
   }
   function handleCommentChange(val){
-    setEditRoot(function(prev){ var cl=deepClone(prev); var n=nodeAtPath(cl,editPath); if(n) n.comment=val; return cl; });
+    setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); var n=nodeAtPath(cl,editPath); if(n) n.comment=val; return cl; });
   }
   function handleSgfImport(){
     try{
@@ -1922,6 +1925,15 @@ function App(){
     };
     reader.readAsText(f); e.target.value="";
   }
+  // Navigation guard — if editor has unsaved changes, show warning instead of navigating
+  function guardedNav(action){
+    if(tab===TABS.editor&&editDirty){
+      setPendingNavAction(function(){ return action; });
+    } else {
+      action();
+    }
+  }
+
   function handleSgfExport(){ downloadBlob(treeToSgf(editRoot,editSize), (editName||"joseki").replace(/\s+/g,"_")+".sgf"); }
   function handleSaveEntry(){
     if(!editName.trim()) return;
@@ -2843,11 +2855,13 @@ function App(){
           })()}
         <div className="brow">
             <button className="btn btnsm" onClick={function(){
-              setSinglePracticeEntry(entry);
-              setQEntry(null);
-              setTab(TABS.quiz);
+              guardedNav(function(){
+                setSinglePracticeEntry(entry);
+                setQEntry(null);
+                setTab(TABS.quiz);
+              });
             }}>Practice</button>
-            <button className="btn btnsm" onClick={function(){ openEditor(entry); }}>Edit</button>
+            <button className="btn btnsm" onClick={function(){ guardedNav(function(){ openEditor(entry); }); }}>Edit</button>
             <button className="btn btnsm" onClick={function(){ toggleEnabled(entry.id); }}
               style={entry.enabled!==false?{background:"#4A8870",color:"#fff",borderColor:"#2E6058"}:{}}>
               {entry.enabled===false?"Off":"On"}
@@ -3001,7 +3015,7 @@ function App(){
         )}
         {tab===TABS.library&&(
           <span>
-            <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30",marginRight:4}} onClick={function(){ setTab(TABS.about); }}>About</button>
+            <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30",marginRight:4}} onClick={function(){ guardedNav(function(){ setTab(TABS.about); }); }}>About</button>
             <button className="btn btnxs" style={{color:"#C8BCA8",borderColor:"#5A4A30",marginRight:4}} onClick={function(){ setShowHelp(true); }}>Help</button>
             <div style={{position:"relative",display:"inline-block",marginRight:4}} onClick={function(e){ e.stopPropagation(); }}>
               <button className="btn btnxs"
@@ -3100,7 +3114,7 @@ function App(){
         <div className="con">
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"0.2rem"}}>
             <p className="ptitle" style={{margin:0}}>Joseki Library</p>
-            <button className="btn btnp btnsm" onClick={function(){ openEditor(null); }}>+ New</button>
+            <button className="btn btnp btnsm" onClick={function(){ guardedNav(function(){ openEditor(null); }); }}>+ New</button>
           </div>
           <p className="psub">Toggle On/Off to include in the practice pool.</p>
           <div style={{marginBottom:"0.65rem",position:"relative"}}>
@@ -3438,7 +3452,7 @@ function App(){
                   var desiredColor=editTool==="setup-B"?"B":"W";
                   var naturalFirst=((editRoot.colorOffset||0)%2===0)?"B":"W";
                   if(desiredColor!==naturalFirst){
-                    setEditRoot(function(prev){ var cl=deepClone(prev); cl.colorOffset=(cl.colorOffset||0)^1; return cl; });
+                    setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); cl.colorOffset=(cl.colorOffset||0)^1; return cl; });
                   }
                 }
                 setEditTool(t.id);
@@ -3941,21 +3955,21 @@ function App(){
       })()}
 
       <nav className="botnav">
-        <button className={"bottab"+(tab===TABS.library?" on":"")} onClick={function(){ setTab(TABS.library); }}>
+        <button className={"bottab"+(tab===TABS.library?" on":"")} onClick={function(){ guardedNav(function(){ setTab(TABS.library); }); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
             <rect x="3" y="3" width="18" height="18" rx="2"/>
             <line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>
           </svg>
           Library
         </button>
-        <button className={"bottab"+(tab===TABS.quiz?" on":"")} onClick={function(){ setQEntry(null); setTab(TABS.quiz); }}>
+        <button className={"bottab"+(tab===TABS.quiz?" on":"")} onClick={function(){ guardedNav(function(){ setQEntry(null); setTab(TABS.quiz); }); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M8.5 8.5a3.8 3.8 0 1 1 5 3.54C12.5 13 12 13.8 12 15" strokeLinecap="round"/>
             <circle cx="12" cy="19" r="1.2" fill="currentColor" stroke="none"/>
           </svg>
           Practice
         </button>
-        <button className={"bottab"+(tab===TABS.editor?" on":"")} onClick={function(){ openEditor(null); }}>
+        <button className={"bottab"+(tab===TABS.editor?" on":"")} onClick={function(){ guardedNav(function(){ openEditor(null); }); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
@@ -4090,7 +4104,7 @@ function App(){
           </div>
 
           <div style={{textAlign:"center",marginTop:"1.5rem",marginBottom:"1rem"}}>
-            <button className="btn btnsm" onClick={function(){ setTab(TABS.library); }}>Back to Library</button>
+            <button className="btn btnsm" onClick={function(){ guardedNav(function(){ setTab(TABS.library); }); }}>Back to Library</button>
           </div>
           <div style={{textAlign:"center",fontSize:"0.75rem",color:"var(--color-text-tertiary)",paddingBottom:"1rem"}}>
             <a href="https://josekisage.com/privacy.html" target="_blank" rel="noopener noreferrer"
@@ -4232,6 +4246,28 @@ function App(){
                 onClick={function(){ handleExportLib(pendingExportWhich); setShowExportStatsNotice(false); setPendingExportWhich(null); }}>
                 Export anyway
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingNavAction&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:"1rem"}}>
+          <div style={{background:"var(--color-background-primary)",border:"0.5px solid var(--color-border-secondary)",borderRadius:10,width:"100%",maxWidth:380,padding:"1.4rem",boxShadow:"0 8px 32px rgba(0,0,0,0.35)"}}>
+            <p style={{fontWeight:600,fontSize:"0.95rem",color:"var(--color-text-primary)",marginBottom:"0.6rem"}}>Unsaved changes</p>
+            <p style={{fontSize:"0.82rem",color:"var(--color-text-secondary)",marginBottom:"1rem",lineHeight:1.6}}>
+              Your joseki has unsaved changes. Do you want to discard them?
+            </p>
+            <div style={{display:"flex",gap:"0.5rem",justifyContent:"flex-end",flexWrap:"wrap"}}>
+              <button className="btn btnsm" onClick={function(){
+                setPendingNavAction(null);
+              }}>No, return to editor</button>
+              <button className="btn btnsm" style={{background:"#8B2020",color:"#fff",borderColor:"#6A1818"}}
+                onClick={function(){
+                  var action=pendingNavAction;
+                  setEditDirty(false);
+                  setPendingNavAction(null);
+                  action();
+                }}>Yes, discard changes</button>
             </div>
           </div>
         </div>
