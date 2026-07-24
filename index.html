@@ -1978,6 +1978,7 @@ function App(){
       return editId?prev.map(function(e){ return e.id===editId?{...entry,enabled:e.enabled}:e; }):prev.concat(entry);
     });
     bumpSync();
+    setEditDirty(false);
     if(!editId) setEditId(newId); // now tracking as existing entry
     setSaveFlash(true);
     setTimeout(function(){ setSaveFlash(false); },1500);
@@ -3511,7 +3512,7 @@ function App(){
               </div>
               {/* Mark positions button with submenu toggle */}
               <button
-                className={"tbtn"+(MARK_TOOLS.indexOf(editTool)!==-1?" on":"")}
+                className={"tbtn"+(showMarkSubmenu?" on":"")}
                 onClick={function(){ setShowMarkSubmenu(function(v){ return !v; }); if(MARK_TOOLS.indexOf(editTool)===-1) setEditTool("triangle"); }}>
                 Mark ▾
               </button>
