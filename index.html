@@ -851,6 +851,23 @@ function GoBoard(props){
       var pts=cx(a.c)+","+( cy(a.r)-s)+" "+(cx(a.c)-s*0.9)+","+(cy(a.r)+s*0.55)+" "+(cx(a.c)+s*0.9)+","+(cy(a.r)+s*0.55);
       return <polygon key={"ann"+i} points={pts} fill="none" stroke={fg2} strokeWidth="1.8"/>;
     }
+    if(a.type==="square"){
+      var fg3=sc==="B"?"#fff":sc==="W"?"#1a1a1a":"#5a3e1b";
+      var hs=CELL*0.28;
+      return <rect key={"ann"+i} x={cx(a.c)-hs} y={cy(a.r)-hs} width={hs*2} height={hs*2} fill="none" stroke={fg3} strokeWidth="1.8"/>;
+    }
+    if(a.type==="circle"){
+      var fg4=sc==="B"?"#fff":sc==="W"?"#1a1a1a":"#5a3e1b";
+      return <circle key={"ann"+i} cx={cx(a.c)} cy={cy(a.r)} r={CELL*0.3} fill="none" stroke={fg4} strokeWidth="1.8"/>;
+    }
+    if(a.type==="x"){
+      var fg5=sc==="B"?"#fff":sc==="W"?"#1a1a1a":"#5a3e1b";
+      var d=CELL*0.27;
+      return <g key={"ann"+i}>
+        <line x1={cx(a.c)-d} y1={cy(a.r)-d} x2={cx(a.c)+d} y2={cy(a.r)+d} stroke={fg5} strokeWidth="1.8"/>
+        <line x1={cx(a.c)+d} y1={cy(a.r)-d} x2={cx(a.c)-d} y2={cy(a.r)+d} stroke={fg5} strokeWidth="1.8"/>
+      </g>;
+    }
     return null;
   });
 
@@ -903,14 +920,26 @@ function GoBoard(props){
       hoverEl=<text x={cx(hc)} y={cy(hr)} textAnchor="middle" dominantBaseline="central"
         fontSize={CELL*0.52} fontFamily="monospace" fontWeight="bold"
         fill="rgba(60,50,40,0.55)">{hoverLabel}</text>;
-    } else if(hoverMode==="triangle"){
+    } else if(hoverMode==="triangle"||hoverMode==="square"||hoverMode==="circle"||hoverMode==="x"){
       var stEntry=stones[sk(hr,hc)];
-      var triColor=stEntry&&stEntry.color==="B"?"rgba(200,200,200,0.7)":"rgba(60,60,60,0.7)";
-      var tp1=cx(hc)+","+( cy(hr)-CELL*0.32);
-      var tp2=(cx(hc)-CELL*0.29)+","+(cy(hr)+CELL*0.20);
-      var tp3=(cx(hc)+CELL*0.29)+","+(cy(hr)+CELL*0.20);
-      hoverEl=<polygon opacity="0.6" points={tp1+" "+tp2+" "+tp3}
-        fill="none" stroke={triColor} strokeWidth="1.5"/>;
+      var mColor=stEntry&&stEntry.color==="B"?"rgba(200,200,200,0.7)":"rgba(60,60,60,0.7)";
+      if(hoverMode==="triangle"){
+        var tp1=cx(hc)+","+( cy(hr)-CELL*0.32);
+        var tp2=(cx(hc)-CELL*0.29)+","+(cy(hr)+CELL*0.20);
+        var tp3=(cx(hc)+CELL*0.29)+","+(cy(hr)+CELL*0.20);
+        hoverEl=<polygon opacity="0.6" points={tp1+" "+tp2+" "+tp3} fill="none" stroke={mColor} strokeWidth="1.5"/>;
+      } else if(hoverMode==="square"){
+        var hs2=CELL*0.28;
+        hoverEl=<rect opacity="0.6" x={cx(hc)-hs2} y={cy(hr)-hs2} width={hs2*2} height={hs2*2} fill="none" stroke={mColor} strokeWidth="1.5"/>;
+      } else if(hoverMode==="circle"){
+        hoverEl=<circle opacity="0.6" cx={cx(hc)} cy={cy(hr)} r={CELL*0.3} fill="none" stroke={mColor} strokeWidth="1.5"/>;
+      } else if(hoverMode==="x"){
+        var d2=CELL*0.27;
+        hoverEl=<g opacity="0.6">
+          <line x1={cx(hc)-d2} y1={cy(hr)-d2} x2={cx(hc)+d2} y2={cy(hr)+d2} stroke={mColor} strokeWidth="1.5"/>
+          <line x1={cx(hc)+d2} y1={cy(hr)-d2} x2={cx(hc)-d2} y2={cy(hr)+d2} stroke={mColor} strokeWidth="1.5"/>
+        </g>;
+      }
     } else if(hoverMode==="stone"&&!stones[sk(hr,hc)]){
       hoverEl=<circle cx={cx(hc)} cy={cy(hr)} r={CELL*0.43}
         fill={nextColor==="B"?"rgba(0,0,0,0.22)":"rgba(255,255,255,0.42)"}
@@ -1720,6 +1749,8 @@ function App(){
   const treeZoomRef=useRef(1);
   useEffect(function(){ treeZoomRef.current=treeZoom; },[treeZoom]);
   const[editTool,setEditTool]=useState("stone");
+  const[editSetupColor,setEditSetupColor]=useState("B"); // color for setup placement
+  const[showMarkSubmenu,setShowMarkSubmenu]=useState(false); // mark positions submenu open
   const[editShowNums,setEditShowNums]=useState(true);
   const[editView,setEditView]=useState("full"); // full | half | quarter
   const[editViewRot,setEditViewRot]=useState(0); // 0=bottom-right 1=bottom-left 2=top-left 3=top-right
@@ -1773,7 +1804,7 @@ function App(){
     setDeleteSubtreeConfirm(false);
     // If navigating away from root, switch off setup tools
     if(path.length>0){
-      setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; });
+      setEditTool(function(t){ return (t==="setup"||MARK_TOOLS.indexOf(t)!==-1)?"stone":t; });
     }
   }
 
@@ -1787,9 +1818,9 @@ function App(){
       var nn=makeNode({r:r,c:c,color:editTurn});
       var newLen=editNode.children.length;
       setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
-      setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
-    } else if(editTool==="setup-B"||editTool==="setup-W"){
-      var color=editTool==="setup-B"?"B":"W";
+      setEditTool(function(t){ return (t==="setup"||MARK_TOOLS.indexOf(t)!==-1)?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
+    } else if(editTool==="setup"){
+      var color=editSetupColor;
       // Block if point has a numbered move stone
       var existingStone=editStones[key];
       if(existingStone&&existingStone.moveNum!==null) return;
@@ -1834,7 +1865,7 @@ function App(){
         var nn=makeSetupNode(added2,removed2);
         var newLen=editNode.children.length;
         setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
-        setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
+        setEditTool(function(t){ return (t==="setup"||MARK_TOOLS.indexOf(t)!==-1)?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
       }
     } else if(editTool==="letter"){
       if(letterCount>=26) return;
@@ -1853,38 +1884,38 @@ function App(){
         }
         return cl;
       });
-    } else if(editTool==="triangle"){
+    } else if(editTool==="triangle"||editTool==="square"||editTool==="circle"||editTool==="x"){
       setEditDirty(true); setEditRoot(function(prev){
         var cl=deepClone(prev); var n=nodeAtPath(cl,editPath);
         var ei=n.annotations.findIndex(function(a){ return a.r===r&&a.c===c; });
         if(ei!==-1) n.annotations.splice(ei,1);
-        else n.annotations.push({r:r,c:c,type:"triangle"});
+        else n.annotations.push({r:r,c:c,type:editTool});
         return cl;
       });
     }
   }
 
   function handlePass(){
-    if(editTool==="setup-B"||editTool==="setup-W"){
+    if(editTool==="setup"){
       setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); cl.colorOffset=(cl.colorOffset||0)^1; return cl; });
-      setEditTool(function(t){ return t==="setup-B"?"setup-W":"setup-B"; });
+      setEditSetupColor(function(c){ return c==="B"?"W":"B"; });
     } else {
       if(!editNode) return;
       var existing=editNode.children.findIndex(function(ch){ return ch.move&&ch.move.pass&&ch.move.color===editTurn; });
-      if(existing!==-1){ setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(existing); }); return; }
+      if(existing!==-1){ setEditTool(function(t){ return (t==="setup"||MARK_TOOLS.indexOf(t)!==-1)?"stone":t; }); setEditPath(function(p){ return p.concat(existing); }); return; }
       var nn=makeNode({pass:true,color:editTurn});
       var newLen=editNode.children.length;
       setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,editPath).children.push(nn); return cl; });
-      setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
+      setEditTool(function(t){ return (t==="setup"||MARK_TOOLS.indexOf(t)!==-1)?"stone":t; }); setEditPath(function(p){ return p.concat(newLen); });
     }
   }
 
-  function handleBack(){ if(editPath.length>0){ setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.slice(0,-1); }); } }
+  function handleBack(){ if(editPath.length>0){ setEditTool(function(t){ return (t==="setup"||MARK_TOOLS.indexOf(t)!==-1)?"stone":t; }); setEditPath(function(p){ return p.slice(0,-1); }); } }
   function handleUndoLeaf(){
     if(!editPath.length||!editNode||editNode.children.length) return;
     var pp=editPath.slice(0,-1), idx=editPath[editPath.length-1];
     setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,pp).children.splice(idx,1); return cl; });
-    setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(pp);
+    setEditTool(function(t){ return (t==="setup"||MARK_TOOLS.indexOf(t)!==-1)?"stone":t; }); setEditPath(pp);
   }
   const[deleteSubtreeConfirm,setDeleteSubtreeConfirm]=useState(false);
   function handleDeleteSubtree(){
@@ -1893,7 +1924,7 @@ function App(){
     setDeleteSubtreeConfirm(false);
     var pp=editPath.slice(0,-1), idx=editPath[editPath.length-1];
     setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); nodeAtPath(cl,pp).children.splice(idx,1); return cl; });
-    setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(pp);
+    setEditTool(function(t){ return (t==="setup"||MARK_TOOLS.indexOf(t)!==-1)?"stone":t; }); setEditPath(pp);
   }
   function handleFlagNode(){
     setEditDirty(true); setEditRoot(function(prev){
@@ -2814,10 +2845,8 @@ function App(){
     @media(max-width:560px){.ptitle{font-size:1.05rem;}.btn{font-size:0.76rem;}}
   `;
 
-  var tools=[
-    {id:"stone",label:"Stone"},{id:"setup-B",label:"Setup Black"},{id:"setup-W",label:"Setup White"},
-    {id:"letter",label:"Mark Positions"},{id:"triangle",label:"Mark Stones"}
-  ];
+  var tools=[]; // legacy - no longer used for rendering; kept for any external refs
+  var MARK_TOOLS=["letter","triangle","square","circle","x"];
 
   function renderEntry(entry){
     return (
@@ -3442,24 +3471,75 @@ function App(){
               })()}
             </select>
           </div>
-          <div className="toolrow">
-            {tools.filter(function(t){
-              // Setup tools available at all nodes
-              return true;
-            }).map(function(t){
-              return <button key={t.id} className={"tbtn"+(editTool===t.id?" on":"")} onClick={function(){
-                if(t.id==="stone"&&(editTool==="setup-B"||editTool==="setup-W")&&editPath.length===0){
-                  var desiredColor=editTool==="setup-B"?"B":"W";
-                  var naturalFirst=((editRoot.colorOffset||0)%2===0)?"B":"W";
-                  if(desiredColor!==naturalFirst){
-                    setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); cl.colorOffset=(cl.colorOffset||0)^1; return cl; });
-                  }
-                }
-                setEditTool(t.id);
-              }}>{t.label}</button>;
-            })}
-            {!(editPath.length===0&&editTool==="stone")&&(
-              <button className="tbtn" onClick={handlePass} title="Tenuki">Tenuki</button>
+          <div className="toolrow" style={{flexDirection:"column",alignItems:"flex-start",gap:"0.3rem"}}>
+            {/* Row 1: Placement controls */}
+            <div style={{display:"flex",gap:"0.25rem",alignItems:"center",flexWrap:"wrap"}}>
+              {/* Move / Setup toggle */}
+              <div style={{display:"flex",border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-md)",overflow:"hidden"}}>
+                <button className={"tbtn"+(editTool!=="setup"?" on":"")}
+                  style={{borderRadius:0,borderRight:"0.5px solid var(--color-border-secondary)",minWidth:48}}
+                  onClick={function(){
+                    if(editTool==="setup"&&editPath.length===0){
+                      // Switching back to move from setup at root — sync colorOffset if needed
+                      var naturalFirst=((editRoot.colorOffset||0)%2===0)?"B":"W";
+                      if(editSetupColor!==naturalFirst){
+                        setEditDirty(true); setEditRoot(function(prev){ var cl=deepClone(prev); cl.colorOffset=(cl.colorOffset||0)^1; return cl; });
+                      }
+                    }
+                    setEditTool("stone");
+                  }}>Move</button>
+                <button className={"tbtn"+(editTool==="setup"?" on":"")}
+                  style={{borderRadius:0,minWidth:48}}
+                  onClick={function(){ setEditTool("setup"); }}>Setup</button>
+              </div>
+              {/* B / W stone toggle — only active in setup mode */}
+              <div style={{display:"flex",border:"0.5px solid var(--color-border-secondary)",borderRadius:"var(--border-radius-md)",overflow:"hidden",opacity:editTool==="setup"?1:0.35}}>
+                <button
+                  className={"tbtn"+(editSetupColor==="B"?" on":"")}
+                  style={{borderRadius:0,borderRight:"0.5px solid var(--color-border-secondary)",padding:"3px 8px"}}
+                  disabled={editTool!=="setup"}
+                  onClick={function(){ setEditSetupColor("B"); }}>
+                  <svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#1C1814" stroke="#3A2E20" strokeWidth="0.5"/></svg>
+                </button>
+                <button
+                  className={"tbtn"+(editSetupColor==="W"?" on":"")}
+                  style={{borderRadius:0,padding:"3px 8px"}}
+                  disabled={editTool!=="setup"}
+                  onClick={function(){ setEditSetupColor("W"); }}>
+                  <svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#F5F0E8" stroke="#C0A060" strokeWidth="1"/></svg>
+                </button>
+              </div>
+              {/* Mark positions button with submenu toggle */}
+              <button
+                className={"tbtn"+(MARK_TOOLS.indexOf(editTool)!==-1?" on":"")}
+                onClick={function(){ setShowMarkSubmenu(function(v){ return !v; }); if(MARK_TOOLS.indexOf(editTool)===-1) setEditTool("triangle"); }}>
+                Mark ▾
+              </button>
+              {!(editPath.length===0&&editTool==="stone")&&(
+                <button className="tbtn" onClick={handlePass}>Tenuki</button>
+              )}
+            </div>
+            {/* Mark positions submenu */}
+            {showMarkSubmenu&&(
+              <div style={{display:"flex",gap:"0.25rem",alignItems:"center",background:"var(--color-background-secondary)",border:"0.5px solid var(--color-border-tertiary)",borderRadius:"var(--border-radius-md)",padding:"4px 6px"}}>
+                <span style={{fontSize:"0.7rem",color:"var(--color-text-tertiary)",marginRight:2}}>Shape:</span>
+                {[
+                  {id:"letter",el:<svg width="16" height="16" viewBox="0 0 16 16"><text x="8" y="12" textAnchor="middle" fontSize="11" fontWeight="bold" fontFamily="monospace" fill="currentColor">A</text></svg>},
+                  {id:"triangle",el:<svg width="16" height="16" viewBox="0 0 16 16"><polygon points="8,3 14,13 2,13" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg>},
+                  {id:"square",el:<svg width="16" height="16" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg>},
+                  {id:"circle",el:<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.5" fill="none"/></svg>},
+                  {id:"x",el:<svg width="16" height="16" viewBox="0 0 16 16"><line x1="3" y1="3" x2="13" y2="13" stroke="currentColor" strokeWidth="1.5"/><line x1="13" y1="3" x2="3" y2="13" stroke="currentColor" strokeWidth="1.5"/></svg>},
+                ].map(function(shape){
+                  return <button key={shape.id}
+                    onClick={function(){ setEditTool(shape.id); }}
+                    style={{width:30,height:30,border:"0.5px solid "+(editTool===shape.id?"#4A8870":"var(--color-border-secondary)"),
+                      borderRadius:"var(--border-radius-md)",background:editTool===shape.id?"#E1F5EE":"transparent",
+                      display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",
+                      color:editTool===shape.id?"#085041":"var(--color-text-primary)"}}>
+                    {shape.el}
+                  </button>;
+                })}
+              </div>
             )}
             <div style={{marginLeft:"auto",display:"flex",gap:"0.22rem",alignItems:"center"}}>
               <select value={editSize} onChange={function(e){ setEditSize(Number(e.target.value)); setEditRoot(rootNode()); setEditPath([]); }}>
@@ -3535,7 +3615,7 @@ function App(){
                 var btnBorder=isActive?(isBlack?"#6BAA8E":"#4A8870"):(isBlack?"#3A2E20":"#8B7A60");
                 var btnOutline=isActive?("2px solid "+(isBlack?"#6BAA8E":"#4A8870")):"none";
                 return <button key={i} className="tbtn" style={{background:btnBg,color:btnColor,borderColor:btnBorder,outline:btnOutline,outlineOffset:"1px"}}
-                  onClick={function(){ setEditTool(function(t){ return (t==="setup-B"||t==="setup-W"||t==="letter"||t==="triangle")?"stone":t; }); setEditPath(function(p){ return p.concat(i); }); }}>{lbl}</button>;
+                  onClick={function(){ setEditTool(function(t){ return (t==="setup"||MARK_TOOLS.indexOf(t)!==-1)?"stone":t; }); setEditPath(function(p){ return p.concat(i); }); }}>{lbl}</button>;
               })}
             </div>
           )}
@@ -3549,17 +3629,17 @@ function App(){
                   branchPoints={editBranches}
                   annotations={editAnnotations}
                   showNumbers={true}
-                  nextColor={(editTool==="setup-B")?"B":(editTool==="setup-W")?"W":editTurn}
-                  hoverMode={(editTool==="letter"||editTool==="triangle")?editTool:"stone"}
+                  nextColor={(editTool==="setup")?editSetupColor:editTurn}
+                  hoverMode={MARK_TOOLS.indexOf(editTool)!==-1?editTool:"stone"}
                   hoverLabel={letterCount<26?ALPHA[letterCount]:""}
                   viewMode={editView} viewRot={editViewRot}/>
               </div>
               <div className="tr">
                 <span style={{width:8,height:8,borderRadius:"50%",background:editTurn==="B"?"#1C1814":"#F0EDE5",border:editTurn==="B"?"none":"1px solid #C4BAA8",display:"inline-block",flexShrink:0}}/>
-                {(editTool==="setup-B"||editTool==="setup-W")
-                  ?"Setup mode"
+                {editTool==="setup"
+                  ?"Setup mode — placing "+(editSetupColor==="B"?"black":"white")+" stones"
                   :editTool==="letter"?(letterCount>=26?"Continuation limit (26 max)":"Click to add continuation")
-                  :editTool==="triangle"?"Click to mark/unmark stone"
+                  :MARK_TOOLS.indexOf(editTool)!==-1?"Click to mark/unmark position"
                   :(editTurn==="B"?"Black to play":"White to play")}
               </div>
             </div>
