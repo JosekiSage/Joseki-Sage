@@ -532,7 +532,7 @@ function nodeToSgf(node,size){
     if(node.move.pass) s+=node.move.color+"[]";
     else s+=node.move.color+"["+sgfC(node.move.r,node.move.c)+"]";
   }
-  if(node.comment) s+="C["+node.comment.replace(/\]/g,"\]")+"]";
+  if(node.comment) s+="C["+node.comment.replace(/\\/g,"\\\\").replace(/\]/g,"\\]")+"]";
   return s;
 }
 function seqToSgf(node,size){
@@ -555,7 +555,7 @@ function treeToSgf(root,size){
   var aw=setupKeys.filter(function(k){ return root.setupStones[k]==="W"; });
   if(ab.length) s+="AB"+ab.map(function(k){ var p=k.split(","); return "["+sgfC(Number(p[0]),Number(p[1]))+"]"; }).join("");
   if(aw.length) s+="AW"+aw.map(function(k){ var p=k.split(","); return "["+sgfC(Number(p[0]),Number(p[1]))+"]"; }).join("");
-  if(root.comment) s+="C["+root.comment.replace(/\]/g,"\\]")+"]";
+  if(root.comment) s+="C["+root.comment.replace(/\\/g,"\\\\").replace(/\]/g,"\\]")+"]";
   // Children of root
   if(root.children.length===0){ s+=")"; return s; }
   if(root.children.length===1){ s+=seqToSgf(root.children[0],size); }
@@ -568,6 +568,21 @@ function parseSgf(txt){
   var pos=0, boardSize=19;
   function skip(){ while(pos<txt.length && /\s/.test(txt[pos])) pos++; }
   function con(){ return txt[pos++]; }
+  // Expand an SGF point value; supports compressed rectangles ("aa:cc")
+  function expandPts(v){
+    var out=[];
+    if(v.indexOf(":")!==-1){
+      var parts=v.split(":");
+      var a=parseSgfC(parts[0],boardSize), b=parseSgfC(parts[1],boardSize);
+      if(a&&b){
+        for(var rr=Math.min(a.r,b.r); rr<=Math.max(a.r,b.r); rr++)
+          for(var cc=Math.min(a.c,b.c); cc<=Math.max(a.c,b.c); cc++) out.push({r:rr,c:cc});
+      }
+    } else {
+      var rc=parseSgfC(v,boardSize); if(rc) out.push(rc);
+    }
+    return out;
+  }
   function propVal(){
     var vs=[];
     while(pos<txt.length && txt[pos]==="["){
@@ -592,7 +607,7 @@ function parseSgf(txt){
     }
     return ps;
   }
-  function parseSeq(){
+  function parseSeq(isTop){
     var nodes=[]; skip();
     while(pos<txt.length && txt[pos]!==")" && txt[pos]!=="("){
       if(txt[pos]===";"){con(); nodes.push(parseProps()); skip();}
@@ -600,7 +615,7 @@ function parseSgf(txt){
     }
     var vars=[]; skip();
     while(pos<txt.length && txt[pos]==="("){
-      con(); vars.push(parseSeq()); skip();
+      con(); vars.push(parseSeq(false)); skip();
       if(pos<txt.length && txt[pos]===")"){con(); skip();}
     }
     if(!nodes.length) return null;
@@ -622,22 +637,24 @@ function parseSgf(txt){
           n.type="move";
         }
         if(pv.p==="C") n.comment=pv.vs[0]||"";
-        if(!isRoot&&(pv.p==="AB"||pv.p==="AW")){
+        if(pv.p==="AB"||pv.p==="AW"){
+          var stoneColor=pv.p==="AB"?"B":"W";
           pv.vs.forEach(function(v){
-            var rc=parseSgfC(v,boardSize);
-            if(rc) n.setupAdded.push({r:rc.r,c:rc.c,color:pv.p==="AB"?"B":"W"});
+            expandPts(v).forEach(function(rc){
+              if(isRoot){ n.setupStones[sk(rc.r,rc.c)]=stoneColor; }
+              else { n.setupAdded.push({r:rc.r,c:rc.c,color:stoneColor}); }
+            });
           });
         }
         if(!isRoot&&pv.p==="AE"){
           pv.vs.forEach(function(v){
-            var rc=parseSgfC(v,boardSize);
-            if(rc) n.setupRemoved.push({r:rc.r,c:rc.c});
+            expandPts(v).forEach(function(rc){ n.setupRemoved.push({r:rc.r,c:rc.c}); });
           });
         }
       });
       return n;
     }
-    var chain=nodes.map(function(ps,i){ return pn(ps,i===0&&nodes.length>0); });
+    var chain=nodes.map(function(ps,i){ return pn(ps,!!isTop&&i===0); });
     for(var i=0;i<chain.length-1;i++) chain[i].children.push(chain[i+1]);
     vars.forEach(function(v){ if(v) chain[chain.length-1].children.push(v); });
     return chain[0];
@@ -645,7 +662,7 @@ function parseSgf(txt){
   var si=txt.indexOf("(");
   if(si===-1) return {root:rootNode(),boardSize:19};
   pos=si+1;
-  return {root:parseSeq()||rootNode(), boardSize:boardSize};
+  return {root:parseSeq(true)||rootNode(), boardSize:boardSize};
 }
 
 // Persistence
@@ -1751,6 +1768,11 @@ function App(){
   const[editTool,setEditTool]=useState("stone");
   const[editSetupColor,setEditSetupColor]=useState("B"); // color for setup placement
   const[showMarkSubmenu,setShowMarkSubmenu]=useState(false); // mark positions submenu open
+  // Keep submenu in sync: if the tool is changed away from a mark tool (Move/Setup toggle,
+  // node navigation, etc.), close the submenu so the Mark button no longer looks active.
+  useEffect(function(){
+    if(showMarkSubmenu&&["letter","triangle","square","circle","x"].indexOf(editTool)===-1) setShowMarkSubmenu(false);
+  },[editTool,showMarkSubmenu]);
   const[editShowNums,setEditShowNums]=useState(true);
   const[editView,setEditView]=useState("full"); // full | half | quarter
   const[editViewRot,setEditViewRot]=useState(0); // 0=bottom-right 1=bottom-left 2=top-left 3=top-right
@@ -1940,7 +1962,7 @@ function App(){
   function handleSgfImport(){
     try{
       var result=parseSgf(sgfTxt);
-      setEditRoot(result.root); setEditSize(result.boardSize); setEditPath([]);
+      setEditDirty(true); setEditRoot(result.root); setEditSize(result.boardSize); setEditPath([]);
       setSgfErr(""); setShowSgfPanel(false); setSgfTxt("");
     }catch(e){ setSgfErr("Parse error: "+e.message); }
   }
@@ -1950,7 +1972,7 @@ function App(){
     reader.onload=function(ev){
       try{
         var result=parseSgf(ev.target.result);
-        setEditRoot(result.root); setEditSize(result.boardSize); setEditPath([]);
+        setEditDirty(true); setEditRoot(result.root); setEditSize(result.boardSize); setEditPath([]);
         setSgfErr(""); setShowSgfPanel(false);
       }catch(err){ setSgfErr("Parse error: "+err.message); }
     };
@@ -3513,7 +3535,15 @@ function App(){
               {/* Mark positions button with submenu toggle */}
               <button
                 className={"tbtn"+(showMarkSubmenu?" on":"")}
-                onClick={function(){ setShowMarkSubmenu(function(v){ return !v; }); if(MARK_TOOLS.indexOf(editTool)===-1) setEditTool("triangle"); }}>
+                onClick={function(){
+                  if(showMarkSubmenu){
+                    setShowMarkSubmenu(false);
+                    if(MARK_TOOLS.indexOf(editTool)!==-1) setEditTool("stone");
+                  } else {
+                    setShowMarkSubmenu(true);
+                    if(MARK_TOOLS.indexOf(editTool)===-1) setEditTool("triangle");
+                  }
+                }}>
                 Mark ▾
               </button>
               {!(editPath.length===0&&editTool==="stone")&&(
